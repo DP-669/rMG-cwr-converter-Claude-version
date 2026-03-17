@@ -137,7 +137,7 @@ def _parse_sourceaudio(df: pd.DataFrame) -> tuple:
 
         track = {
             'title':        title,
-            'track_code':   get(row, 'TRACK: IDENTITY', 'TRACK: NUMBER'),
+            'track_code':   get(row, 'TRACK: NUMBER'),  # sequential number only, never Identity hash
             'isrc':         get(row, 'CODE: ISRC').replace('-',''),
             'iswc':         get(row, 'CODE: ISWC'),
             'album_code':   get(row, 'ALBUM: CODE'),
