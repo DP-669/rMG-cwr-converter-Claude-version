@@ -91,7 +91,7 @@ NWR = RecordDef("NWR", 260, [
     FieldDef("contact_id",        185, 14, 'A'),   # pos 185-198, blank
     FieldDef("cwr_work_type",     199, 2,  'A'),   # pos 199-200, blank
     FieldDef("grand_rights_ind",  201, 1,  'A'),   # pos 201, blank
-    FieldDef("composite_count",   202, 3,  'N'),   # pos 202-204, 000
+    FieldDef("composite_count",   202, 3,  'A'),   # pos 202-204, blank (approved file uses spaces)
     FieldDef("date_publ_printed", 205, 8,  'A'),   # pos 205-212, blank
     FieldDef("exceptional_clause",213, 1,  'A'),   # pos 213, blank
     FieldDef("opus_number",       214, 25, 'A'),   # pos 214-238, blank
