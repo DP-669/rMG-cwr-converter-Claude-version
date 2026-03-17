@@ -181,13 +181,17 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
             raise CWREngineError(f"Track '{title}': ISRC '{isrc}' must be exactly 12 characters.")
 
         # ---- NWR ----
+        # submitter_work_id: simple sequential integer zero-padded to 7 digits.
+        # Matches Chris's approved format (0000001, 0000002, etc.)
+        # Do NOT use TRACK: Identity — that's a SourceAudio hex hash, not a CWR work number.
+        submitter_work_id = f"{t_idx+1:07d}"
         lines.append(build_record("NWR", {
-            "t_seq":          t_seq,
-            "title":          title,
-            "submitter_work_id": str(track.get('track_code', f"{t_idx+1:07d}"))[:14],
-            "iswc":           track.get('iswc', ''),
-            "copyright_date": "00000000",
-            "duration":       fmt_duration(track.get('duration', 0)),
+            "t_seq":             t_seq,
+            "title":             title,
+            "submitter_work_id": submitter_work_id,
+            "iswc":              track.get('iswc', ''),
+            "copyright_date":    "00000000",
+            "duration":          fmt_duration(track.get('duration', 0)),
         }, context=context))
         total_records_in_group += 1
 
@@ -220,6 +224,7 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
             pub_internal_id = f"0000000{p_idx:02d}"[:9]
 
             # SPU — Original Publisher (E)
+            # SR share = 10000 for Original Publisher (confirmed from Chris's approved files)
             lines.append(build_record("SPU", {
                 "t_seq":       t_seq,
                 "rec_seq":     f"{rec_seq:08d}",
@@ -233,13 +238,14 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
                 "mr_soc":      pub_mr_soc,
                 "mr_share":    mr_share,
                 "sr_soc":      "",
-                "sr_share":    sr_share,
+                "sr_share":    "10000",
                 "soc_agr_num": str(agr_num)[:14],
             }, context=context))
             rec_seq += 1
             total_records_in_group += 1
 
             # SPU — Lumina as Sub-Publisher (SE)
+            # SR society = 033 (MCPS), SR share = 00000 (confirmed from Chris's approved files)
             lines.append(build_record("SPU", {
                 "t_seq":       t_seq,
                 "rec_seq":     f"{rec_seq:08d}",
@@ -252,7 +258,7 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
                 "pr_share":    "00000",
                 "mr_soc":      lumina_mr_soc,
                 "mr_share":    "00000",
-                "sr_soc":      "",
+                "sr_soc":      lumina_mr_soc,
                 "sr_share":    "00000",
                 "soc_agr_num": str(agr_num)[:14],
             }, context=context))
