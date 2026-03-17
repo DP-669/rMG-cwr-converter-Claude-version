@@ -399,13 +399,24 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
         total_records_in_group += 1
 
         # ---- ORN ----
-        album_title = str(track.get('album_title', album_code))[:60]
+        # album_title: prefer explicit field, fall back to album_code
+        album_title = str(track.get('album_title', '') or album_code).strip()[:60]
+        if not album_title:
+            album_title = album_code
+
+        # cut_number: use track's own number from CSV if present, else batch position
+        raw_cut = track.get('track_number', '') or track.get('cut_number', '')
+        try:
+            cut_number = f"{int(str(raw_cut).strip()):04d}"
+        except (ValueError, TypeError):
+            cut_number = f"{t_idx+1:04d}"
+
         lines.append(build_record("ORN", {
             "t_seq":        t_seq,
             "rec_seq":      f"{rec_seq:08d}",
             "prod_title":   album_title,
             "cd_identifier":album_code,
-            "cut_number":   f"{t_idx+1:04d}",
+            "cut_number":   cut_number,
             "library":      library_name[:8],
         }, context=context))
         total_records_in_group += 1
@@ -441,12 +452,50 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
 # HELPERS
 # ==============================================================================
 
+def _normalize(s: str) -> str:
+    """Normalize for fuzzy matching: uppercase, collapse all spaces."""
+    return ''.join(str(s).upper().split())
+
+
 def _lookup_agreement(pub_name: str, agreement_map: dict) -> str:
-    """Case-insensitive partial match on publisher name."""
-    pub_name_upper = pub_name.strip().upper()
+    """
+    Match publisher name to agreement number.
+    Three passes, most-specific first:
+      1. Exact match (normalized)
+      2. Normalized substring match (either direction)
+      3. Normalized substring match after removing common suffixes
+    """
+    needle = _normalize(pub_name)
+
+    # Pass 1: exact normalized match
     for key, val in agreement_map.items():
-        if key.strip().upper() in pub_name_upper or pub_name_upper in key.strip().upper():
+        if _normalize(key) == needle:
             return str(val)
+
+    # Pass 2: normalized substring (either direction)
+    for key, val in agreement_map.items():
+        k = _normalize(key)
+        if k in needle or needle in k:
+            return str(val)
+
+    # Pass 3: strip common suffixes and retry
+    suffixes = ['MUSIC', 'PUBLISHING', 'SONGS', 'ENTERTAINMENT', 'RECORDS', 'PRODUCTIONS']
+    needle_stripped = needle
+    for sfx in suffixes:
+        if needle_stripped.endswith(sfx):
+            needle_stripped = needle_stripped[:-len(sfx)].rstrip()
+            break
+    if needle_stripped != needle:
+        for key, val in agreement_map.items():
+            k = _normalize(key)
+            k_stripped = k
+            for sfx in suffixes:
+                if k_stripped.endswith(sfx):
+                    k_stripped = k_stripped[:-len(sfx)]
+                    break
+            if k_stripped == needle_stripped or k_stripped in needle_stripped or needle_stripped in k_stripped:
+                return str(val)
+
     return ""
 
 
