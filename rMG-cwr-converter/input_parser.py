@@ -149,37 +149,57 @@ def _parse_sourceaudio(df: pd.DataFrame) -> tuple:
         }
 
         # Publishers — up to 5 slots
+        # Handles both SourceAudio export variants:
+        #   'PUBLISHER 1: NAME'  (space before colon)
+        #   'PUBLISHER:1: NAME'  (colon after number)
         for n in range(1, 6):
-            name = get(row, f'PUBLISHER {n}: NAME', f'PUBLISHER:{n}: NAME')
+            name = get(row,
+                f'PUBLISHER {n}: NAME', f'PUBLISHER:{n}: NAME',
+                f'PUBLISHER {n}:NAME',  f'PUBLISHER:{n}:NAME')
             if not name:
                 break
             track['publishers'].append({
                 'name':     name,
-                'ipi':      get(row, f'PUBLISHER {n}: IPI', f'PUBLISHER:{n}: IPI'),
-                'pr_soc':   _soc_code(get(row, f'PUBLISHER {n}: SOCIETY', f'PUBLISHER:{n}: SOCIETY')),
-                'mr_soc':   _soc_code(get(row, f'PUBLISHER {n}: SOCIETY', f'PUBLISHER:{n}: SOCIETY')),
-                'pr_share': _safe_float(get(row, f'PUBLISHER {n}: OWNER PERFORMANCE SHARE %',
-                                              f'PUBLISHER {n}: COLLECTION PERFORMANCE SHARE %')),
-                'mr_share': _safe_float(get(row, f'PUBLISHER {n}: OWNER MECHANICAL SHARE %',
-                                              f'PUBLISHER {n}: COLLECTION MECHANICAL SHARE %')),
+                'ipi':      get(row, f'PUBLISHER {n}: IPI',    f'PUBLISHER:{n}: IPI'),
+                'pr_soc':   _soc_code(get(row,
+                                f'PUBLISHER {n}: SOCIETY',     f'PUBLISHER:{n}: SOCIETY')),
+                'mr_soc':   _soc_code(get(row,
+                                f'PUBLISHER {n}: SOCIETY',     f'PUBLISHER:{n}: SOCIETY')),
+                'pr_share': _safe_float(get(row,
+                                f'PUBLISHER {n}: OWNER PERFORMANCE SHARE %',
+                                f'PUBLISHER:{n}: OWNER PERFORMANCE SHARE %',
+                                f'PUBLISHER {n}: COLLECTION PERFORMANCE SHARE %',
+                                f'PUBLISHER:{n}: COLLECTION PERFORMANCE SHARE %')),
+                'mr_share': _safe_float(get(row,
+                                f'PUBLISHER {n}: OWNER MECHANICAL SHARE %',
+                                f'PUBLISHER:{n}: OWNER MECHANICAL SHARE %',
+                                f'PUBLISHER {n}: COLLECTION MECHANICAL SHARE %',
+                                f'PUBLISHER:{n}: COLLECTION MECHANICAL SHARE %')),
                 'sr_share': 0.0,
             })
 
         # Writers — up to 5 slots
+        # Handles both variants: 'WRITER 1: LAST NAME' and 'WRITER:1: LAST NAME'
         for n in range(1, 6):
-            last = get(row, f'WRITER {n}: LAST NAME')
+            last = get(row, f'WRITER {n}: LAST NAME', f'WRITER:{n}: LAST NAME')
             if not last:
                 break
             track['writers'].append({
                 'last_name':          last,
-                'first_name':         get(row, f'WRITER {n}: FIRST NAME'),
-                'ipi':                get(row, f'WRITER {n}: IPI'),
-                'pr_soc':             _soc_code(get(row, f'WRITER {n}: SOCIETY')),
+                'first_name':         get(row, f'WRITER {n}: FIRST NAME',  f'WRITER:{n}: FIRST NAME'),
+                'ipi':                get(row, f'WRITER {n}: IPI',          f'WRITER:{n}: IPI'),
+                'pr_soc':             _soc_code(get(row,
+                                        f'WRITER {n}: SOCIETY',             f'WRITER:{n}: SOCIETY')),
                 'mr_soc':             '099',
                 'sr_soc':             '099',
-                'pr_share':           _safe_float(get(row, f'WRITER {n}: OWNER PERFORMANCE SHARE %',
-                                                         f'WRITER {n}: COLLECTION PERFORMANCE SHARE %')),
-                'original_publisher': get(row, f'WRITER {n}: ORIGINAL PUBLISHER'),
+                'pr_share':           _safe_float(get(row,
+                                        f'WRITER {n}: OWNER PERFORMANCE SHARE %',
+                                        f'WRITER:{n}: OWNER PERFORMANCE SHARE %',
+                                        f'WRITER {n}: COLLECTION PERFORMANCE SHARE %',
+                                        f'WRITER:{n}: COLLECTION PERFORMANCE SHARE %')),
+                'original_publisher': get(row,
+                                        f'WRITER {n}: ORIGINAL PUBLISHER',
+                                        f'WRITER:{n}: ORIGINAL PUBLISHER'),
             })
 
         _validate_track(track, warnings)
