@@ -230,8 +230,8 @@ REC = RecordDef("REC", 507, [
     FieldDef("record_type",       1,   3,  'A', constant="REC"),
     FieldDef("t_seq",             4,   8,  'N'),
     FieldDef("rec_seq",           12,  8,  'N'),
-    FieldDef("release_date",      20,  8,  'A'),   # blank
-    FieldDef("release_duration",  28,  6,  'N'),   # blank / 000000
+    FieldDef("release_date",      20,  8,  'N', constant="00000000"),   # YYYYMMDD, always 00000000
+    FieldDef("release_duration",  28,  6,  'A'),   # spaces when unknown (per approved file)
     FieldDef("album_title",       99,  60, 'A'),   # blank
     FieldDef("album_label",       159, 60, 'A'),   # blank
     FieldDef("release_catalog",   219, 15, 'A'),   # album code e.g. RC001
