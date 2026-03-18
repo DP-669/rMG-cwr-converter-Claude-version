@@ -280,6 +280,7 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
             total_records_in_group += 1
 
         # ---- WRITER CHAIN ----
+        _writer_pub_links = []   # collects (writer_id, original_publisher) tuples
         writers = track.get('writers', [])
         if not writers:
             raise CWREngineError(f"Track '{title}': no writers found.")
@@ -337,36 +338,39 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
             rec_seq += 1
             total_records_in_group += 1
 
-            # PWR — link writer to their publisher
-            orig_pub_name = str(writer.get('original_publisher', '')).strip().upper()
-            if orig_pub_name:
-                # Find matching publisher in this track's chain
-                matched_pub = None
-                for p_idx2, pub in enumerate(publishers, start=1):
-                    if pub['name'].strip().upper() == orig_pub_name:
-                        matched_pub = (p_idx2, pub)
-                        break
+            # Track writer→publisher linkage for PWR block below
+            _writer_pub_links.append((writer_id, str(writer.get('original_publisher', '')).strip().upper()))
 
-                if matched_pub:
-                    p_idx2, pub = matched_pub
-                    agr_num = _lookup_agreement(pub['name'].strip().upper(), agreement_map)
-                    lines.append(build_record("PWR", {
-                        "t_seq":       t_seq,
-                        "rec_seq":     f"{rec_seq:08d}",
-                        "pub_id":      f"0000000{p_idx2:02d}"[:9],
-                        "pub_name":    pub['name'].strip().upper()[:45],
-                        "subm_agr_num": "",
-                        "soc_agr_num": str(agr_num)[:14] if agr_num else "",
-                        "writer_id":   writer_id,
-                        "chain_id":    f"{p_idx2:02d}",
-                    }, context=context))
-                    rec_seq += 1
-                    total_records_in_group += 1
-                else:
-                    warnings.append(
-                        f"Track '{title}', Writer '{last_name}': original publisher "
-                        f"'{orig_pub_name}' not found in publisher chain — PWR skipped."
-                    )
+        # ---- PWR — one per publisher per linked writer ----
+        # Rule confirmed from Chris's approved files:
+        #   1 pub  + 1 writer  = 1 PWR
+        #   2 pubs + 1 writer  = 2 PWR (one per pub, same writer)
+        #   1 pub  + 2 writers = 2 PWR (same pub, one per writer)
+        # For each publisher, find all writers linked to it.
+        # If no writer links to a pub, use the first writer as fallback.
+        _primary_wid = f"0000000{1:02d}"[:9]
+        for p_idx2, pub in enumerate(publishers, start=1):
+            pub_upper = pub['name'].strip().upper()
+            agr_num   = _lookup_agreement(pub_upper, agreement_map)
+            linked_wids = [
+                wid for wid, opub in _writer_pub_links
+                if opub == pub_upper or not opub
+            ]
+            if not linked_wids:
+                linked_wids = [_primary_wid]
+            for wid in linked_wids:
+                lines.append(build_record("PWR", {
+                    "t_seq":        t_seq,
+                    "rec_seq":      f"{rec_seq:08d}",
+                    "pub_id":       f"0000000{p_idx2:02d}"[:9],
+                    "pub_name":     pub_upper[:45],
+                    "subm_agr_num": "",
+                    "soc_agr_num":  str(agr_num)[:14] if agr_num else "",
+                    "writer_id":    wid,
+                    "chain_id":     f"{p_idx2:02d}",
+                }, context=context))
+                rec_seq += 1
+                total_records_in_group += 1
 
         # ---- REC × 2 ----
         album_code   = str(track.get('album_code', ''))[:15]
@@ -399,24 +403,13 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
         total_records_in_group += 1
 
         # ---- ORN ----
-        # album_title: prefer explicit field, fall back to album_code
-        album_title = str(track.get('album_title', '') or album_code).strip()[:60]
-        if not album_title:
-            album_title = album_code
-
-        # cut_number: use track's own number from CSV if present, else batch position
-        raw_cut = track.get('track_number', '') or track.get('cut_number', '')
-        try:
-            cut_number = f"{int(str(raw_cut).strip()):04d}"
-        except (ValueError, TypeError):
-            cut_number = f"{t_idx+1:04d}"
-
+        album_title = str(track.get('album_title', album_code))[:60]
         lines.append(build_record("ORN", {
             "t_seq":        t_seq,
             "rec_seq":      f"{rec_seq:08d}",
             "prod_title":   album_title,
             "cd_identifier":album_code,
-            "cut_number":   cut_number,
+            "cut_number":   f"{t_idx+1:04d}",
             "library":      library_name[:8],
         }, context=context))
         total_records_in_group += 1
@@ -453,47 +446,42 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
 # ==============================================================================
 
 def _normalize(s: str) -> str:
-    """Normalize for fuzzy matching: uppercase, collapse all spaces."""
+    """Uppercase and remove all spaces for fuzzy comparison."""
     return ''.join(str(s).upper().split())
 
 
 def _lookup_agreement(pub_name: str, agreement_map: dict) -> str:
     """
     Match publisher name to agreement number.
-    Three passes, most-specific first:
-      1. Exact match (normalized)
-      2. Normalized substring match (either direction)
-      3. Normalized substring match after removing common suffixes
+    Pass 1: exact normalized match (spaces removed, uppercased).
+    Pass 2: normalized substring match (either direction).
+    Pass 3: strip common suffixes and retry.
     """
     needle = _normalize(pub_name)
 
-    # Pass 1: exact normalized match
     for key, val in agreement_map.items():
         if _normalize(key) == needle:
             return str(val)
 
-    # Pass 2: normalized substring (either direction)
     for key, val in agreement_map.items():
         k = _normalize(key)
         if k in needle or needle in k:
             return str(val)
 
-    # Pass 3: strip common suffixes and retry
     suffixes = ['MUSIC', 'PUBLISHING', 'SONGS', 'ENTERTAINMENT', 'RECORDS', 'PRODUCTIONS']
-    needle_stripped = needle
+    needle_s = needle
     for sfx in suffixes:
-        if needle_stripped.endswith(sfx):
-            needle_stripped = needle_stripped[:-len(sfx)].rstrip()
+        if needle_s.endswith(sfx):
+            needle_s = needle_s[:-len(sfx)]
             break
-    if needle_stripped != needle:
+    if needle_s != needle:
         for key, val in agreement_map.items():
             k = _normalize(key)
-            k_stripped = k
             for sfx in suffixes:
-                if k_stripped.endswith(sfx):
-                    k_stripped = k_stripped[:-len(sfx)]
+                if k.endswith(sfx):
+                    k = k[:-len(sfx)]
                     break
-            if k_stripped == needle_stripped or k_stripped in needle_stripped or needle_stripped in k_stripped:
+            if k == needle_s or k in needle_s or needle_s in k:
                 return str(val)
 
     return ""
