@@ -403,15 +403,39 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
         total_records_in_group += 1
 
         # ---- ORN ----
-        album_title = str(track.get('album_title', album_code))[:60]
-        lines.append(build_record("ORN", {
-            "t_seq":        t_seq,
-            "rec_seq":      f"{rec_seq:08d}",
-            "prod_title":   album_title,
-            "cd_identifier":album_code,
-            "cut_number":   f"{t_idx+1:04d}",
-            "library":      library_name[:8],
-        }, context=context))
+        # album_title: prefer explicit field, fall back to album_code
+        album_title = str(track.get('album_title', '') or album_code).strip()[:60]
+        if not album_title:
+            album_title = album_code
+
+        # cut_number: use track's own number from CSV if present, else batch position
+        raw_cut = track.get('track_number', '') or track.get('cut_number', '')
+        try:
+            cut_number = f"{int(str(raw_cut).strip()):04d}"
+        except (ValueError, TypeError):
+            cut_number = f"{t_idx+1:04d}"
+
+        # ORN library field: full name, no truncation.
+        # Record length is dynamic: 101 fixed chars + exact library name length.
+        # Chris's approved files confirm no trailing padding after library name.
+        orn_library = library_name[:60].rstrip()
+        orn_length  = 101 + len(orn_library)
+        orn_canvas  = Canvas(orn_length)
+        _orn_data = {
+            "t_seq":         t_seq,
+            "rec_seq":       f"{rec_seq:08d}",
+            "prod_title":    album_title,
+            "cd_identifier": album_code,
+            "cut_number":    cut_number,
+            "library":       orn_library,
+        }
+        for fld in SCHEMA["ORN"].fields:
+            val = fld.constant if fld.constant is not None else _orn_data.get(fld.name, "")
+            if fld.name == "library":
+                orn_canvas.stamp(fld.start, len(orn_library), val, fld.fmt, fld.name, context)
+            else:
+                orn_canvas.stamp(fld.start, fld.length, val, fld.fmt, fld.name, context)
+        lines.append(orn_canvas.render())
         total_records_in_group += 1
 
     # ---- GRT ----
