@@ -27,7 +27,9 @@ class ValidationError:
 
 
 # Record types that must be exactly their schema length
-STRICT_LENGTH_TYPES = {'NWR', 'SPU', 'SPT', 'SWR', 'SWT', 'PWR', 'REC', 'ORN', 'GRH', 'GRT', 'TRL'}
+STRICT_LENGTH_TYPES = {'NWR', 'SPU', 'SPT', 'SWR', 'SWT', 'PWR', 'REC', 'GRH', 'GRT', 'TRL'}
+# Note: ORN is excluded from strict length check — its length is dynamic
+#       (101 fixed chars + library name length, no trailing padding)
 
 
 def validate(cwr_content: str, source_csv_bytes: bytes = None, filename: str = "") -> dict:
@@ -94,7 +96,7 @@ def validate(cwr_content: str, source_csv_bytes: bytes = None, filename: str = "
             continue
         rtype = line[:3]
 
-        # Length check
+        # Length check — ORN excluded (dynamic length)
         expected = SCHEMA[rtype].total_length if rtype in SCHEMA else None
         if rtype in STRICT_LENGTH_TYPES and expected:
             if len(line) != expected:
@@ -177,6 +179,13 @@ def validate(cwr_content: str, source_csv_bytes: bytes = None, filename: str = "
                         f"Intended Purpose at position 20 must be 'LIB', found '{purpose}'.",
                         excerpt=line[19:25]
                     ))
+            # ORN minimum length check (101 chars fixed prefix + at least 1 char library name)
+            if len(line) < 102:
+                errors.append(ValidationError(
+                    "CRITICAL", line_num, "ORN",
+                    f"ORN record is only {len(line)} chars — minimum is 102 (101 fixed + library name).",
+                    excerpt=line
+                ))
 
     # ---- 3. PR SHARE AUDIT ----
     for t_seq, total in swr_shares.items():
@@ -247,16 +256,21 @@ def _mirror_audit(source_csv_bytes: bytes, nwr_records: list, cwr_lines: list) -
                 f"Source CSV has no title column. Found: {', '.join(df.columns[:8])}"))
             return errors, warnings
 
-        # Determine row count = number of expected NWR records.
-        # SourceAudio: one row per track (each row is one NWR, even alt mixes)
-        # Harvest: multi-row per track, deduplicate by ISRC CODE or TRACK CODE
+        # Determine unique track count from CSV.
+        # SourceAudio: one row per track — use as-is.
+        # Harvest: multi-row per track (one row per publisher deal).
+        #   TRACK CODE is the reliable unique-per-track identifier.
+        #   Do NOT use ISRC CODE — it can appear on multiple rows for the same track,
+        #   causing drop_duplicates to undercount.
         if 'CODE: ISRC' in df.columns:
-            # SourceAudio single-row-per-track format
+            # SourceAudio: single row per track already
             csv_df = df
-        elif 'ISRC CODE' in df.columns:
-            csv_df = df.drop_duplicates(subset=['ISRC CODE'])
         elif 'TRACK CODE' in df.columns:
+            # Harvest: deduplicate by TRACK CODE — one unique code per track
             csv_df = df.drop_duplicates(subset=['TRACK CODE'])
+        elif 'ISRC CODE' in df.columns:
+            # Fallback only: ISRC may be shared across rows, use with caution
+            csv_df = df.drop_duplicates(subset=['ISRC CODE'])
         else:
             csv_df = df.drop_duplicates(subset=[title_col])
 
