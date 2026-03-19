@@ -254,7 +254,10 @@ REC = RecordDef("REC", 507, [
 #        but approved file ends at 109 — library name is short, no padding).
 #        We pad library to fill to 109 total.
 # ------------------------------------------------------------------------------
-ORN = RecordDef("ORN", 109, [
+# ORN total length is dynamic: 101 fixed chars + library name length (up to 60).
+# Chris's approved files confirm no trailing padding — record ends after library name.
+# We set total_length=162 (spec max) here but the engine overrides it per-record.
+ORN = RecordDef("ORN", 162, [
     FieldDef("record_type",   1,  3,  'A', constant="ORN"),
     FieldDef("t_seq",         4,  8,  'N'),
     FieldDef("rec_seq",       12, 8,  'N'),
@@ -262,7 +265,7 @@ ORN = RecordDef("ORN", 109, [
     FieldDef("prod_title",    23, 60, 'A'),   # album title
     FieldDef("cd_identifier", 83, 15, 'A'),   # album code
     FieldDef("cut_number",    98, 4,  'N'),   # track number zero-padded
-    FieldDef("library",       102, 8, 'A'),   # library name (truncated to fit 109)
+    FieldDef("library",       102, 60, 'A'),  # library name — full name, no truncation
 ])
 
 # ------------------------------------------------------------------------------
