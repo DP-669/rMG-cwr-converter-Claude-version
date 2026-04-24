@@ -1,0 +1,25 @@
+{
+  "last_swn_used": 13616,
+  "last_swn_source": "Chris — CW250011 (NO SURVIVORS VOCAL IMPACT 4)",
+  "updated": "2025-01-01T00:00:00",
+  "history": [
+    {
+      "file": "CW250010LUM_319.V22",
+      "album": "redCola catalog",
+      "swn_start": 1,
+      "swn_end": 10011,
+      "track_count": 10011,
+      "generated_by": "Chris",
+      "date": "2025-01-01T00:00:00"
+    },
+    {
+      "file": "CW250011LUM_319.V22",
+      "album": "EPP+SSC catalog",
+      "swn_start": 10012,
+      "swn_end": 13616,
+      "track_count": 3605,
+      "generated_by": "Chris",
+      "date": "2025-01-01T00:00:00"
+    }
+  ]
+}
