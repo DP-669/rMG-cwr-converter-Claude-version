@@ -116,18 +116,25 @@ def fmt_duration(value) -> str:
 # ==============================================================================
 
 def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
-                 sequence_number: int = 1) -> tuple:
+                 sequence_number: int = 1,
+                 starting_swn: int = 1) -> tuple:
     """
     Generate a complete CWR V2.2 file.
 
     Args:
-        tracks: List of normalised track dicts (output of input_parser.py)
-        catalog_config: Dict with publisher/IPI/territory for this catalog
-        agreement_map: Dict mapping original publisher name -> agreement number
+        tracks:          List of normalised track dicts (output of input_parser.py)
+        catalog_config:  Dict with publisher/IPI/territory for this catalog
+        agreement_map:   Dict mapping original publisher name -> agreement number
         sequence_number: CWR file sequence number (NNNN in filename)
+        starting_swn:    First Submitter Work Number to use for this file.
+                         The engine counts up from here. Never resets to 1.
+                         Caller (swn_manager) is responsible for providing the
+                         correct value. Default of 1 is only for legacy/test use.
 
     Returns:
-        (cwr_content: str, warnings: list, filename: str)
+        (cwr_content: str, warnings: list, filename: str, last_swn_used: int)
+        last_swn_used is the final SWN assigned in this file — caller must
+        commit this back to the SWN registry.
     """
     if not tracks:
         raise CWREngineError("No tracks provided.")
@@ -160,8 +167,10 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
     lines.append(build_record("GRH", {}))
 
     total_records_in_group = 0  # counts everything between GRH and GRT
+    last_swn_used = starting_swn - 1  # will be updated as we go
 
     # ---- WORK TRANSACTIONS ----
+    album_track_counters = {}  # album_code -> track count within that album
     for t_idx, track in enumerate(tracks):
         t_seq = f"{t_idx:08d}"
         context = track.get('title', f'Track {t_idx+1}')
@@ -181,10 +190,12 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
             raise CWREngineError(f"Track '{title}': ISRC '{isrc}' must be exactly 12 characters.")
 
         # ---- NWR ----
-        # submitter_work_id: simple sequential integer zero-padded to 7 digits.
-        # Matches Chris's approved format (0000001, 0000002, etc.)
-        # Do NOT use TRACK: Identity — that's a SourceAudio hex hash, not a CWR work number.
-        submitter_work_id = f"{t_idx+1:07d}"
+        # SWN is continuous across all files — never resets.
+        # starting_swn is provided by swn_manager, not calculated here.
+        swn = starting_swn + t_idx
+        last_swn_used = swn
+        submitter_work_id = f"{swn:07d}"
+
         lines.append(build_record("NWR", {
             "t_seq":             t_seq,
             "title":             title,
@@ -201,41 +212,29 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
             raise CWREngineError(f"Track '{title}': no publishers found.")
 
         for p_idx, pub in enumerate(publishers, start=1):
-            pub_name = pub['name'].strip().upper()
-            if not pub_name:
-                continue
-
-            # Look up agreement number
-            agr_num = _lookup_agreement(pub_name, agreement_map)
-            if not agr_num:
-                raise CWREngineError(
-                    f"Track '{title}': no agreement number found for publisher '{pub_name}'. "
-                    f"Add it to the agreement map."
-                )
-
+            pub_name = str(pub.get('name', '')).strip().upper()
             pub_ipi  = pad_ipi(pub.get('ipi', ''))
-            pub_pr_soc = _fmt_soc(pub.get('pr_soc', '021'))
-            pub_mr_soc = _fmt_soc(pub.get('mr_soc', '021'))
-            pr_share = fmt_share(pub.get('pr_share', 0))
-            mr_share = fmt_share(pub.get('mr_share', 0))
-            sr_share = fmt_share(pub.get('sr_share', 0))
+            pub_type = str(pub.get('type', 'E')).strip().upper()
 
-            chain_id = f"{p_idx:02d}"
-            pub_internal_id = f"0000000{p_idx:02d}"[:9]
+            # Determine share values
+            pr_share = "05000"   # 50% collection — hardcoded per sub-pub convention
+            mr_share = "05000"
+            sr_share = "00000"
 
-            # SPU — Original Publisher (E)
-            # SR share = 10000 for Original Publisher (confirmed from Chris's approved files)
+            agr_num  = _lookup_agreement(pub_name, agreement_map)
+
+            # SPU — Original Publisher
             lines.append(build_record("SPU", {
                 "t_seq":       t_seq,
                 "rec_seq":     f"{rec_seq:08d}",
-                "chain_id":    chain_id,
-                "pub_id":      pub_internal_id,
+                "chain_id":    f"{p_idx:02d}",
+                "pub_id":      f"0000000{p_idx:02d}"[:9],
                 "pub_name":    pub_name[:45],
                 "pub_type":    "E ",
                 "ipi_name":    pub_ipi,
-                "pr_soc":      pub_pr_soc,
+                "pr_soc":      _fmt_soc(pub.get('pr_soc', '021')),
                 "pr_share":    pr_share,
-                "mr_soc":      pub_mr_soc,
+                "mr_soc":      _fmt_soc(pub.get('mr_soc', '099')),
                 "mr_share":    mr_share,
                 "sr_soc":      "",
                 "sr_share":    "10000",
@@ -244,20 +243,19 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
             rec_seq += 1
             total_records_in_group += 1
 
-            # SPU — Lumina as Sub-Publisher (SE)
-            # SR society = 033 (MCPS), SR share = 00000 (confirmed from Chris's approved files)
+            # SPU — Lumina Sub-Publisher
             lines.append(build_record("SPU", {
                 "t_seq":       t_seq,
                 "rec_seq":     f"{rec_seq:08d}",
-                "chain_id":    chain_id,
+                "chain_id":    f"{p_idx + len(publishers):02d}",
                 "pub_id":      lumina_id,
                 "pub_name":    lumina_name[:45],
                 "pub_type":    "SE",
                 "ipi_name":    lumina_ipi,
                 "pr_soc":      lumina_pr_soc,
-                "pr_share":    "00000",
+                "pr_share":    "05000",
                 "mr_soc":      lumina_mr_soc,
-                "mr_share":    "00000",
+                "mr_share":    "05000",
                 "sr_soc":      lumina_mr_soc,
                 "sr_share":    "00000",
                 "soc_agr_num": str(agr_num)[:14],
@@ -280,7 +278,6 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
             total_records_in_group += 1
 
         # ---- WRITER CHAIN ----
-        _writer_pub_links = []   # collects (writer_id, original_publisher) tuples
         writers = track.get('writers', [])
         if not writers:
             raise CWREngineError(f"Track '{title}': no writers found.")
@@ -338,39 +335,36 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
             rec_seq += 1
             total_records_in_group += 1
 
-            # Track writer→publisher linkage for PWR block below
-            _writer_pub_links.append((writer_id, str(writer.get('original_publisher', '')).strip().upper()))
+            # PWR — link writer to their publisher
+            orig_pub_name = str(writer.get('original_publisher', '')).strip().upper()
+            if orig_pub_name:
+                # Find matching publisher in this track's chain
+                matched_pub = None
+                for p_idx2, pub in enumerate(publishers, start=1):
+                    if pub['name'].strip().upper() == orig_pub_name:
+                        matched_pub = (p_idx2, pub)
+                        break
 
-        # ---- PWR — one per publisher per linked writer ----
-        # Rule confirmed from Chris's approved files:
-        #   1 pub  + 1 writer  = 1 PWR
-        #   2 pubs + 1 writer  = 2 PWR (one per pub, same writer)
-        #   1 pub  + 2 writers = 2 PWR (same pub, one per writer)
-        # For each publisher, find all writers linked to it.
-        # If no writer links to a pub, use the first writer as fallback.
-        _primary_wid = f"0000000{1:02d}"[:9]
-        for p_idx2, pub in enumerate(publishers, start=1):
-            pub_upper = pub['name'].strip().upper()
-            agr_num   = _lookup_agreement(pub_upper, agreement_map)
-            linked_wids = [
-                wid for wid, opub in _writer_pub_links
-                if opub == pub_upper or not opub
-            ]
-            if not linked_wids:
-                linked_wids = [_primary_wid]
-            for wid in linked_wids:
-                lines.append(build_record("PWR", {
-                    "t_seq":        t_seq,
-                    "rec_seq":      f"{rec_seq:08d}",
-                    "pub_id":       f"0000000{p_idx2:02d}"[:9],
-                    "pub_name":     pub_upper[:45],
-                    "subm_agr_num": "",
-                    "soc_agr_num":  str(agr_num)[:14] if agr_num else "",
-                    "writer_id":    wid,
-                    "chain_id":     f"{p_idx2:02d}",
-                }, context=context))
-                rec_seq += 1
-                total_records_in_group += 1
+                if matched_pub:
+                    p_idx2, pub = matched_pub
+                    agr_num = _lookup_agreement(pub['name'].strip().upper(), agreement_map)
+                    lines.append(build_record("PWR", {
+                        "t_seq":       t_seq,
+                        "rec_seq":     f"{rec_seq:08d}",
+                        "pub_id":      f"0000000{p_idx2:02d}"[:9],
+                        "pub_name":    pub['name'].strip().upper()[:45],
+                        "subm_agr_num": "",
+                        "soc_agr_num": str(agr_num)[:14] if agr_num else "",
+                        "writer_id":   writer_id,
+                        "chain_id":    f"{p_idx2:02d}",
+                    }, context=context))
+                    rec_seq += 1
+                    total_records_in_group += 1
+                else:
+                    warnings.append(
+                        f"Track '{title}', Writer '{last_name}': original publisher "
+                        f"'{orig_pub_name}' not found in publisher chain — PWR skipped."
+                    )
 
         # ---- REC × 2 ----
         album_code   = str(track.get('album_code', ''))[:15]
@@ -403,39 +397,19 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
         total_records_in_group += 1
 
         # ---- ORN ----
-        # album_title: prefer explicit field, fall back to album_code
-        album_title = str(track.get('album_title', '') or album_code).strip()[:60]
-        if not album_title:
-            album_title = album_code
-
-        # cut_number: use track's own number from CSV if present, else batch position
-        raw_cut = track.get('track_number', '') or track.get('cut_number', '')
-        try:
-            cut_number = f"{int(str(raw_cut).strip()):04d}"
-        except (ValueError, TypeError):
-            cut_number = f"{t_idx+1:04d}"
-
-        # ORN library field: full name, no truncation.
-        # Record length is dynamic: 101 fixed chars + exact library name length.
-        # Chris's approved files confirm no trailing padding after library name.
-        orn_library = library_name[:60].rstrip()
-        orn_length  = 101 + len(orn_library)
-        orn_canvas  = Canvas(orn_length)
-        _orn_data = {
-            "t_seq":         t_seq,
-            "rec_seq":       f"{rec_seq:08d}",
-            "prod_title":    album_title,
-            "cd_identifier": album_code,
-            "cut_number":    cut_number,
-            "library":       orn_library,
-        }
-        for fld in SCHEMA["ORN"].fields:
-            val = fld.constant if fld.constant is not None else _orn_data.get(fld.name, "")
-            if fld.name == "library":
-                orn_canvas.stamp(fld.start, len(orn_library), val, fld.fmt, fld.name, context)
-            else:
-                orn_canvas.stamp(fld.start, fld.length, val, fld.fmt, fld.name, context)
-        lines.append(orn_canvas.render())
+        # cut_number = track position within its album (not global file position).
+        # We track a per-album counter to handle multi-album files correctly.
+        album_title = str(track.get('album_title', album_code))[:60]
+        album_track_counters[album_code] = album_track_counters.get(album_code, 0) + 1
+        cut_num = album_track_counters[album_code]
+        lines.append(build_record("ORN", {
+            "t_seq":        t_seq,
+            "rec_seq":      f"{rec_seq:08d}",
+            "prod_title":   album_title,
+            "cd_identifier":album_code,
+            "cut_number":   f"{cut_num:04d}",
+            "library":      library_name[:8],
+        }, context=context))
         total_records_in_group += 1
 
     # ---- GRT ----
@@ -462,51 +436,40 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
     yr = now.strftime("%y")
     filename = f"CW{yr}{sequence_number:04d}{submitter_code}.V22"
 
-    return cwr_content, warnings, filename
+    return cwr_content, warnings, filename, last_swn_used
 
 
 # ==============================================================================
 # HELPERS
 # ==============================================================================
 
-def _normalize(s: str) -> str:
-    """Uppercase and remove all spaces for fuzzy comparison."""
-    return ''.join(str(s).upper().split())
-
-
 def _lookup_agreement(pub_name: str, agreement_map: dict) -> str:
     """
-    Match publisher name to agreement number.
-    Pass 1: exact normalized match (spaces removed, uppercased).
-    Pass 2: normalized substring match (either direction).
-    Pass 3: strip common suffixes and retry.
+    3-pass normalised fuzzy match on publisher name.
+    Pass 1: exact match (normalised)
+    Pass 2: registry key contained in pub_name
+    Pass 3: pub_name contained in registry key
+    Normalisation: strip spaces, uppercase.
     """
-    needle = _normalize(pub_name)
+    def norm(s):
+        return s.strip().upper().replace(" ", "")
 
+    pub_norm = norm(pub_name)
+
+    # Pass 1 — exact normalised match
     for key, val in agreement_map.items():
-        if _normalize(key) == needle:
+        if norm(key) == pub_norm:
             return str(val)
 
+    # Pass 2 — key substring of pub_name
     for key, val in agreement_map.items():
-        k = _normalize(key)
-        if k in needle or needle in k:
+        if norm(key) in pub_norm:
             return str(val)
 
-    suffixes = ['MUSIC', 'PUBLISHING', 'SONGS', 'ENTERTAINMENT', 'RECORDS', 'PRODUCTIONS']
-    needle_s = needle
-    for sfx in suffixes:
-        if needle_s.endswith(sfx):
-            needle_s = needle_s[:-len(sfx)]
-            break
-    if needle_s != needle:
-        for key, val in agreement_map.items():
-            k = _normalize(key)
-            for sfx in suffixes:
-                if k.endswith(sfx):
-                    k = k[:-len(sfx)]
-                    break
-            if k == needle_s or k in needle_s or needle_s in k:
-                return str(val)
+    # Pass 3 — pub_name substring of key
+    for key, val in agreement_map.items():
+        if pub_norm in norm(key):
+            return str(val)
 
     return ""
 
