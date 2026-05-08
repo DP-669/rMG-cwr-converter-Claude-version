@@ -218,8 +218,8 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
 
             # Determine share values
             pr_share = "05000"   # 50% collection — hardcoded per sub-pub convention
-            mr_share = "10000"
-            sr_share = "10000"
+            mr_share = "05000"
+            sr_share = "00000"
 
             agr_num  = _lookup_agreement(pub_name, agreement_map)
 
@@ -253,9 +253,9 @@ def generate_cwr(tracks: list, catalog_config: dict, agreement_map: dict,
                 "pub_type":    "SE",
                 "ipi_name":    lumina_ipi,
                 "pr_soc":      lumina_pr_soc,
-                "pr_share":    "00000",
+                "pr_share":    "05000",
                 "mr_soc":      lumina_mr_soc,
-                "mr_share":    "00000",
+                "mr_share":    "05000",
                 "sr_soc":      lumina_mr_soc,
                 "sr_share":    "00000",
                 "soc_agr_num": str(agr_num)[:14],
