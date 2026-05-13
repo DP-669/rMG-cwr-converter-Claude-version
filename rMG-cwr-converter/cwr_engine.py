@@ -1,6 +1,6 @@
 # ==============================================================================
 
-# CWR ENGINE — CANVAS STAMPER
+# CWR ENGINE - CANVAS STAMPER
 
 # Every record is a fixed-length canvas of spaces.
 
@@ -35,10 +35,10 @@ def stamp(self, start: int, length: int, value: str, fmt: str, field_name: str, 
     if val in ('NAN', 'NONE', 'NAT'):
         val = ""
 
-    # Validate length — hard stop, never silently truncate
+    # Validate length - hard stop, never silently truncate
     if len(val) > length:
         raise CWREngineError(
-            f"FIELD TOO LONG: {field_name}{' (' + context + ')' if context else ''} — "
+            f"FIELD TOO LONG: {field_name}{' (' + context + ')' if context else ''} - "
             f"value '{val}' is {len(val)} chars, max is {length}."
         )
 
@@ -74,7 +74,7 @@ for fld in rec_def.fields:
 
 line = canvas.render()
 
-# Final length assertion — belt and braces
+# Final length assertion - belt and braces
 if len(line) != rec_def.total_length:
     raise CWREngineError(
         f"RECORD LENGTH FAIL: {record_type} rendered to {len(line)}, expected {rec_def.total_length}"
@@ -135,7 +135,7 @@ Args:
     catalog_config: Dict with publisher/IPI/territory for this catalog
     agreement_map: Dict mapping original publisher name -> agreement number
     sequence_number: CWR file sequence number (NNNN in filename)
-    starting_swn: First SWN to use — must continue from last file across all submissions
+    starting_swn: First SWN to use - must continue from last file across all submissions
 
 Returns:
     (cwr_content: str, warnings: list, filename: str, last_swn_used: int)
@@ -148,17 +148,17 @@ lines = []
 now = datetime.utcnow()
 
 lumina_name = catalog_config['lumina_name']
-lumina_ipi  = catalog_config['lumina_ipi']        # full 11-digit
-lumina_id   = catalog_config['lumina_pub_id']     # 9-char internal ID e.g. '000000012'
-lumina_pr_soc = catalog_config.get('lumina_pr_soc', '052')  # PRS
-lumina_mr_soc = catalog_config.get('lumina_mr_soc', '033')  # MCPS
-territory   = catalog_config.get('territory', '0826')        # UK
+lumina_ipi  = catalog_config['lumina_ipi']
+lumina_id   = catalog_config['lumina_pub_id']
+lumina_pr_soc = catalog_config.get('lumina_pr_soc', '052')
+lumina_mr_soc = catalog_config.get('lumina_mr_soc', '033')
+territory   = catalog_config.get('territory', '0826')
 software_tag = catalog_config.get('software_tag', 'rMG-CWR')
 submitter_code = catalog_config.get('submitter_code', 'LUM_319')
 
 # ---- HDR ----
 lines.append(build_record("HDR", {
-    "sender_id":         lumina_ipi[-9:],   # 9-digit IPI
+    "sender_id":         lumina_ipi[-9:],
     "sender_name":       lumina_name,
     "creation_date":     now.strftime("%Y%m%d"),
     "creation_time":     now.strftime("%H%M%S"),
@@ -170,16 +170,15 @@ lines.append(build_record("HDR", {
 # ---- GRH ----
 lines.append(build_record("GRH", {}))
 
-total_records_in_group = 0  # counts everything between GRH and GRT
+total_records_in_group = 0
 
 # ---- WORK TRANSACTIONS ----
-album_track_counters = {}  # album_code -> track count within that album
+album_track_counters = {}
 for t_idx, track in enumerate(tracks):
     t_seq = f"{t_idx:08d}"
     context = track.get('title', f'Track {t_idx+1}')
-    rec_seq = 1   # record sequence within this transaction
+    rec_seq = 1
 
-    # Validate required fields
     for req in ('title', 'isrc', 'album_code', 'library_name'):
         if not track.get(req):
             raise CWREngineError(f"Track {t_idx+1}: missing required field '{req}'")
@@ -193,7 +192,7 @@ for t_idx, track in enumerate(tracks):
         raise CWREngineError(f"Track '{title}': ISRC '{isrc}' must be exactly 12 characters.")
 
     # ---- NWR ----
-    # submitter_work_id: continues from starting_swn across all submissions.
+    # submitter_work_id continues from starting_swn across all submissions.
     # CRITICAL: must never reset to 1. ICE bundles tracks as duplicates if SWNs conflict.
     submitter_work_id = f"{starting_swn + t_idx:07d}"
     lines.append(build_record("NWR", {
@@ -216,7 +215,6 @@ for t_idx, track in enumerate(tracks):
         if not pub_name:
             continue
 
-        # Look up agreement number
         agr_num = _lookup_agreement(pub_name, agreement_map)
         if not agr_num:
             raise CWREngineError(
@@ -224,17 +222,17 @@ for t_idx, track in enumerate(tracks):
                 f"Add it to the agreement map."
             )
 
-        pub_ipi  = pad_ipi(pub.get('ipi', ''))
+        pub_ipi    = pad_ipi(pub.get('ipi', ''))
         pub_pr_soc = _fmt_soc(pub.get('pr_soc', '021'))
         pub_mr_soc = _fmt_soc(pub.get('mr_soc', '021'))
-        pr_share = fmt_share(pub.get('pr_share', 0))
-        mr_share = "10000"  # FIXED: always 10000 per Chris approved files
-        sr_share = "10000"  # FIXED: always 10000 per Chris approved files
+        pr_share   = fmt_share(pub.get('pr_share', 0))
+        mr_share   = "10000"  # FIXED: always 10000 per Chris approved files
+        sr_share   = "10000"  # FIXED: always 10000 per Chris approved files
 
-        chain_id = f"{p_idx:02d}"
+        chain_id        = f"{p_idx:02d}"
         pub_internal_id = f"0000000{p_idx:02d}"[:9]
 
-        # SPU — Original Publisher (E)
+        # SPU - Original Publisher (E)
         lines.append(build_record("SPU", {
             "t_seq":       t_seq,
             "rec_seq":     f"{rec_seq:08d}",
@@ -254,7 +252,7 @@ for t_idx, track in enumerate(tracks):
         rec_seq += 1
         total_records_in_group += 1
 
-        # SPU — Lumina as Sub-Publisher (SE)
+        # SPU - Lumina as Sub-Publisher (SE)
         lines.append(build_record("SPU", {
             "t_seq":       t_seq,
             "rec_seq":     f"{rec_seq:08d}",
@@ -274,15 +272,15 @@ for t_idx, track in enumerate(tracks):
         rec_seq += 1
         total_records_in_group += 1
 
-        # SPT — Publisher Territory (Lumina collecting)
+        # SPT - Publisher Territory (Lumina collecting)
         lines.append(build_record("SPT", {
             "t_seq":    t_seq,
             "rec_seq":  f"{rec_seq:08d}",
             "pub_id":   lumina_id,
             "constant": "      ",
             "pr_coll":  pr_share,
-            "mr_coll":  "10000",   # FIXED: hardcoded
-            "sr_coll":  "10000",   # FIXED: hardcoded
+            "mr_coll":  "10000",
+            "sr_coll":  "10000",
             "tis_code": territory,
         }, context=context))
         rec_seq += 1
@@ -293,8 +291,6 @@ for t_idx, track in enumerate(tracks):
     if not writers:
         raise CWREngineError(f"Track '{title}': no writers found.")
 
-    # Validate total writer PR share — approved files show 50% (collection share)
-    # or 100% (ownership share). Both are valid. Warn on anything else.
     total_pr = sum(float(w.get('pr_share', 0)) for w in writers)
     if abs(total_pr - 50.0) > 0.5 and abs(total_pr - 100.0) > 0.5:
         warnings.append(
@@ -346,7 +342,7 @@ for t_idx, track in enumerate(tracks):
         rec_seq += 1
         total_records_in_group += 1
 
-        # PWR — link writer to their publisher
+        # PWR - link writer to their publisher
         orig_pub_name = str(writer.get('original_publisher', '')).strip().upper()
         if orig_pub_name:
             matched_pub = None
@@ -373,14 +369,13 @@ for t_idx, track in enumerate(tracks):
             else:
                 warnings.append(
                     f"Track '{title}', Writer '{last_name}': original publisher "
-                    f"'{orig_pub_name}' not found in publisher chain — PWR skipped."
+                    f"'{orig_pub_name}' not found in publisher chain - PWR skipped."
                 )
 
     # ---- REC x 2 ----
     album_code   = str(track.get('album_code', ''))[:15]
     library_name = str(track.get('library_name', ''))[:60]
 
-    # REC 1 — physical release (media_type = 'CD ')
     lines.append(build_record("REC", {
         "t_seq":           t_seq,
         "rec_seq":         f"{rec_seq:08d}",
@@ -393,7 +388,6 @@ for t_idx, track in enumerate(tracks):
     rec_seq += 1
     total_records_in_group += 1
 
-    # REC 2 — digital (media_type = 'DW ', includes track title)
     lines.append(build_record("REC", {
         "t_seq":           t_seq,
         "rec_seq":         f"{rec_seq:08d}",
@@ -422,23 +416,21 @@ for t_idx, track in enumerate(tracks):
 
 # ---- GRT ----
 nwr_count = len(tracks)
-grt_record_count = total_records_in_group + 2  # +1 GRH, +1 GRT itself
+grt_record_count = total_records_in_group + 2
 lines.append(build_record("GRT", {
     "transaction_count": f"{nwr_count:08d}",
     "record_count":      f"{grt_record_count:08d}",
 }))
 
 # ---- TRL ----
-total_all_records = total_records_in_group + 4  # HDR + GRH + GRT + TRL
+total_all_records = total_records_in_group + 4
 lines.append(build_record("TRL", {
     "transaction_count": f"{nwr_count:08d}",
     "record_count":      f"{total_all_records:08d}",
 }))
 
-# Join with CRLF, add final CRLF
 cwr_content = "\r\n".join(lines) + "\r\n"
 
-# Generate filename
 yr = now.strftime("%y")
 filename = f"CW{yr}{sequence_number:04d}{submitter_code}.V22"
 
