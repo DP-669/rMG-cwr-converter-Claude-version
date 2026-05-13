@@ -1,11 +1,11 @@
 # ==============================================================================
-# rMG CWR CONVERTER — STREAMLIT APP
+# rMG CWR CONVERTER - STREAMLIT APP
 # Claude Version | DP-669/rMG-cwr-converter-Claude-version
-# Version: v1.5.0 — 2026-05-12
+# Version: v1.5.1 - 2026-05-12
 #
-# Tab 1: Generate — CSV upload or SourceAudio API fetch -> .V22 + download
-# Tab 2: Validate — upload .V22, run geometry audit
-# Tab 3: Ledger   — Vesna's Dropbox spreadsheet live view + sequence tracking
+# Tab 1: Generate - CSV upload or SourceAudio API fetch -> .V22 + download
+# Tab 2: Validate - upload .V22, run geometry audit
+# Tab 3: Ledger   - Vesna's Dropbox spreadsheet live view + sequence tracking
 # ==============================================================================
 
 import streamlit as st
@@ -18,6 +18,7 @@ import re
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime
 
 import config
@@ -30,7 +31,7 @@ from swn_manager import (
     SWNSyncMismatch, SWNError
 )
 
-APP_VERSION = "v1.5.0"
+APP_VERSION = "v1.5.1"
 APP_DATE    = "2026-05-12"
 
 # ---- PAGE CONFIG ----
@@ -73,16 +74,45 @@ st.markdown(
 )
 
 # ---- LOAD CONFIG ----
-lumina_cfg    = dict(st.secrets["LUMINA"])    if "LUMINA"        in st.secrets else config.LUMINA
+lumina_cfg    = dict(st.secrets["LUMINA"])       if "LUMINA"        in st.secrets else config.LUMINA
 agreement_map = dict(st.secrets["AGREEMENT_MAP"]) if "AGREEMENT_MAP" in st.secrets else config.AGREEMENT_MAP
 sa_token      = st.secrets.get("SOURCEAUDIO", {}).get("token", "")
-dropbox_token = st.secrets.get("DROPBOX", {}).get("token", "")
 
 catalogs = config.CATALOGS
 for k in catalogs:
     catalogs[k]["lumina_name"]   = lumina_cfg.get("name",   catalogs[k]["lumina_name"])
     catalogs[k]["lumina_ipi"]    = lumina_cfg.get("ipi",    catalogs[k]["lumina_ipi"])
     catalogs[k]["lumina_pub_id"] = lumina_cfg.get("pub_id", catalogs[k]["lumina_pub_id"])
+
+
+# ==============================================================================
+# DROPBOX TOKEN - auto-refresh using refresh_token + app credentials
+# Never expires. Falls back to static token if refresh fails.
+# ==============================================================================
+
+def _get_dropbox_token():
+    db = st.secrets.get("DROPBOX", {})
+    refresh_token = db.get("refresh_token", "")
+    app_key       = db.get("app_key", "")
+    app_secret    = db.get("app_secret", "")
+    if refresh_token and app_key and app_secret:
+        try:
+            data = urllib.parse.urlencode({
+                "grant_type":    "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id":     app_key,
+                "client_secret": app_secret,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                "https://api.dropboxapi.com/oauth2/token", data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return json.loads(resp.read())["access_token"]
+        except Exception:
+            pass
+    return db.get("token", "")
+
+dropbox_token = _get_dropbox_token()
 
 
 # ==============================================================================
@@ -94,30 +124,22 @@ DROPBOX_SEQ_PATH = "/01 rMG Admin/03 Metadata, Registrations & Data/00 CWR/2026 
 
 def _dropbox_download(path, token):
     url = "https://content.dropboxapi.com/2/files/download"
-    arg = json.dumps({"path": path})
     req = urllib.request.Request(
         url, data=b"",
-        headers={
-            "Authorization":   f"Bearer {token}",
-            "Dropbox-API-Arg": arg,
-            "Content-Type":    "text/plain",
-        }
-    )
+        headers={"Authorization":   f"Bearer {token}",
+                 "Dropbox-API-Arg": json.dumps({"path": path}),
+                 "Content-Type":    "text/plain"})
     with urllib.request.urlopen(req, timeout=15) as resp:
         return resp.read()
 
 
 def _dropbox_upload(path, content, token):
     url = "https://content.dropboxapi.com/2/files/upload"
-    arg = json.dumps({"path": path, "mode": "overwrite", "autorename": False})
     req = urllib.request.Request(
         url, data=content,
-        headers={
-            "Authorization":   f"Bearer {token}",
-            "Dropbox-API-Arg": arg,
-            "Content-Type":    "application/octet-stream",
-        }
-    )
+        headers={"Authorization":   f"Bearer {token}",
+                 "Dropbox-API-Arg": json.dumps({"path": path, "mode": "overwrite"}),
+                 "Content-Type":    "application/octet-stream"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         resp.read()
 
@@ -136,7 +158,7 @@ def load_sequencing_spreadsheet(token):
                 cwr_col = c
                 break
         if cwr_col is None:
-            cwr_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
+            cwr_col = df.columns[0]
         df = df.rename(columns={cwr_col: "cwr_file"})
         df = df[df["cwr_file"].astype(str).str.strip().ne("") &
                 df["cwr_file"].astype(str).str.strip().ne("nan")]
@@ -148,15 +170,28 @@ def load_sequencing_spreadsheet(token):
 def get_next_sequence_from_dropbox(token):
     df = load_sequencing_spreadsheet(token)
     if df is None or df.empty:
-        return 5
+        return 6
     used = df[df["cwr_file"].astype(str).str.match(r"CW\d{6}")]
     if used.empty:
-        return 5
+        return 6
+    # Find last row with a status (accepted/failed/ongoing/pending)
+    # Empty status rows are pre-allocated placeholders, not used
+    status_col = None
+    for c in df.columns:
+        if "status" in str(c).lower():
+            status_col = c
+            break
+    if status_col:
+        used_with_status = used[used[status_col].astype(str).str.strip().ne("nan") &
+                                used[status_col].astype(str).str.strip().ne("")]
+        if not used_with_status.empty:
+            last_file = used_with_status.iloc[-1]["cwr_file"]
+            m = re.search(r"CW\d{2}(\d{4})", str(last_file))
+            if m:
+                return int(m.group(1)) + 1
     last_file = used.iloc[-1]["cwr_file"]
     m = re.search(r"CW\d{2}(\d{4})", str(last_file))
-    if m:
-        return int(m.group(1)) + 1
-    return 5
+    return int(m.group(1)) + 1 if m else 6
 
 
 def write_new_row_to_dropbox(token, cwr_filename, album_name, album_code, date_str):
@@ -167,15 +202,24 @@ def write_new_row_to_dropbox(token, cwr_filename, album_name, album_code, date_s
         df  = pd.read_excel(io.BytesIO(raw), header=None)
         insert_row = len(df)
         for i, row in df.iterrows():
-            vals = [str(v).strip() for v in row]
-            if all(v in ("", "nan") for v in vals):
+            if str(row.iloc[0]).strip() == cwr_filename:
+                # Row already exists - update it
+                df.iloc[i, 1] = album_name
+                df.iloc[i, 2] = album_code
+                df.iloc[i, 3] = date_str
+                df.iloc[i, 4] = "pending"
+                insert_row = None
+                break
+            if all(str(v).strip() in ("", "nan") for v in row):
                 insert_row = i
                 break
-        new_row = ["", cwr_filename, album_name, album_code,
-                   date_str, "pending", "auto-generated"]
-        df.loc[insert_row] = (new_row + [""] * len(df.columns))[:len(df.columns)]
+        if insert_row is not None:
+            new_row = ["", cwr_filename, album_name, album_code,
+                       date_str, "pending", "auto-generated"]
+            df.loc[insert_row] = (new_row + [""] * len(df.columns))[:len(df.columns)]
         buf = io.BytesIO()
-        df.to_excel(buf, index=False, header=False)
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, header=False)
         buf.seek(0)
         _dropbox_upload(DROPBOX_SEQ_PATH, buf.read(), token)
         return True
@@ -216,7 +260,7 @@ def run_generation(tracks, source_label, catalog_key, seq_num,
     starting_swn = get_next_swn(registry) if registry else 1
 
     with st.status("Processing...", expanded=True) as status:
-        st.write(f"📂 Source: **{source_label}** · {len(tracks)} tracks")
+        st.write(f"Source: **{source_label}** · {len(tracks)} tracks")
 
         if not tracks:
             st.error("No tracks found.")
@@ -226,11 +270,10 @@ def run_generation(tracks, source_label, catalog_key, seq_num,
             st.error("Agreement map empty. Add to Streamlit Secrets under [AGREEMENT_MAP].")
             return False
 
-        st.write(f"🔢 SWN: `{format_swn(starting_swn)}` to "
+        st.write(f"SWN: `{format_swn(starting_swn)}` to "
                  f"`{format_swn(starting_swn + len(tracks) - 1)}`")
-        st.write(f"📄 File: `CW26{seq_num:04d}LUM_319.V22`")
 
-        st.write("⚙️ Building CWR records...")
+        st.write("Building CWR records...")
         try:
             cwr_content, gen_warnings, filename, last_swn_used = generate_cwr(
                 tracks=tracks,
@@ -246,7 +289,7 @@ def run_generation(tracks, source_label, catalog_key, seq_num,
         for w in gen_warnings:
             st.warning(w)
 
-        st.write("🛡️ Validating...")
+        st.write("Validating...")
         result = validate(cwr_content,
                           source_csv_bytes=file_bytes_for_validation,
                           filename=filename)
@@ -257,7 +300,7 @@ def run_generation(tracks, source_label, catalog_key, seq_num,
                 st.error(f"Line {err.line} [{err.record_type}]: {err.message}")
             return False
 
-        st.write("💾 Updating SWN registry...")
+        st.write("Updating SWN registry...")
         album_label = tracks[0].get("album_code", "unknown") if tracks else "unknown"
         album_name  = tracks[0].get("album_title", album_label) if tracks else album_label
         updated = commit_swn_range(
@@ -270,13 +313,9 @@ def run_generation(tracks, source_label, catalog_key, seq_num,
             secrets=st.secrets
         )
         st.session_state["swn_registry"] = updated
-        if updated.get("_drive_write_error"):
-            st.warning(f"SWN saved locally. Drive error: {updated['_drive_write_error']}")
-        else:
-            st.write("✅ SWN registry updated")
 
         if dropbox_token:
-            st.write("📊 Updating CWR Sequencing spreadsheet...")
+            st.write("Updating CWR Sequencing spreadsheet...")
             ok = write_new_row_to_dropbox(
                 token=dropbox_token,
                 cwr_filename=filename,
@@ -287,7 +326,7 @@ def run_generation(tracks, source_label, catalog_key, seq_num,
             if ok:
                 load_sequencing_spreadsheet.clear()
                 st.session_state["next_seq"] = seq_num + 1
-                st.write("✅ Spreadsheet updated")
+                st.write("Spreadsheet updated")
             else:
                 st.warning("Could not update Dropbox spreadsheet — update manually.")
 
@@ -306,7 +345,7 @@ def run_generation(tracks, source_label, catalog_key, seq_num,
 
 
 # ==============================================================================
-# TAB 1 — GENERATOR
+# TAB 1 - GENERATOR
 # ==============================================================================
 with tab_gen:
     st.markdown("### CWR 2.2 Generator")
@@ -320,7 +359,7 @@ with tab_gen:
         swn_blocked = True
         st.markdown(f"""
         <div class='swn-error'>
-        🔴 <strong>SWN REGISTRY MISMATCH — GENERATION BLOCKED</strong><br>
+        🔴 <strong>SWN REGISTRY MISMATCH - GENERATION BLOCKED</strong><br>
         Local: <code>{format_swn(conflict.local_val)}</code>
         Drive: <code>{format_swn(conflict.drive_val)}</code><br>
         Choose the correct value to resume.
@@ -344,7 +383,7 @@ with tab_gen:
     elif load_error:
         st.markdown(f"""
         <div class='swn-warn'>
-        ⚠️ SWN Registry load error — {load_error}
+        ⚠️ SWN Registry load error - {load_error}
         </div>""", unsafe_allow_html=True)
 
     elif registry:
@@ -356,19 +395,19 @@ with tab_gen:
         box_class = "swn-warn" if (sync_warn or bootstrapped) else "swn-box"
         icon      = "🟡" if (sync_warn or bootstrapped) else "✅"
         if sync_warn:
-            label = "Google Drive offline — using local cache"
+            label = "Google Drive offline - using local cache"
         elif bootstrapped:
             label = "Registry bootstrapped from defaults"
         else:
             label = "Registry in sync" + (" (Drive + Local)" if drive_ok else " (Local only)")
         st.markdown(f"""
         <div class='{box_class}'>
-        {icon} <strong>SWN Registry — {label}</strong><br>
+        {icon} <strong>SWN Registry - {label}</strong><br>
         Last SWN: <code>{format_swn(last_swn)}</code> · {last_src}<br>
         Next file starts at: <code>{format_swn(get_next_swn(registry))}</code>
         </div>""", unsafe_allow_html=True)
 
-    seq_source = "Vesna's CWR Sequencing spreadsheet" if dropbox_token else "local fallback"
+    seq_source = "Vesna's CWR Sequencing spreadsheet" if dropbox_token else "local fallback (no Dropbox token)"
     st.markdown(f"""
     <div class='seq-box'>
     📄 <strong>Next file:</strong> <code>CW26{next_seq:04d}LUM_319.V22</code>
@@ -384,13 +423,13 @@ with tab_gen:
         )
     with col_opt2:
         seq_override = st.number_input(
-            "Sequence (auto — override if needed)",
+            "Sequence (auto - override if needed)",
             min_value=1, max_value=9999,
             value=int(next_seq), step=1
         )
 
     if swn_blocked:
-        st.warning("⛔ Resolve SWN conflict above before generating.")
+        st.warning("Resolve SWN conflict above before generating.")
     else:
         mode_csv, mode_api = st.tabs(["📄  Upload CSV", "🔗  Fetch from SourceAudio"])
 
@@ -486,11 +525,10 @@ with tab_gen:
 
 
 # ==============================================================================
-# TAB 2 — VALIDATOR
+# TAB 2 - VALIDATOR
 # ==============================================================================
 with tab_val:
     st.markdown("### CWR Geometry Validator")
-    st.caption("Upload a .V22 file to check geometry, field positions, and share totals.")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -530,13 +568,13 @@ with tab_val:
 
 
 # ==============================================================================
-# TAB 3 — LEDGER
+# TAB 3 - LEDGER
 # ==============================================================================
 with tab_ledger:
     st.markdown("### CWR Registration Ledger")
 
     if not dropbox_token:
-        st.warning("No Dropbox token. Add [DROPBOX] token to Streamlit Secrets.")
+        st.warning("No Dropbox token. Add [DROPBOX] section to Streamlit Secrets.")
     else:
         if st.button("🔄 Refresh"):
             load_sequencing_spreadsheet.clear()
@@ -546,21 +584,21 @@ with tab_ledger:
         df = load_sequencing_spreadsheet(dropbox_token)
 
         if df is None:
-            st.error("Could not load spreadsheet from Dropbox. Check token and file path.")
+            st.error("Could not load spreadsheet from Dropbox.")
         elif df.empty:
-            st.info("Spreadsheet loaded — no entries found.")
+            st.info("Spreadsheet loaded - no entries found.")
         else:
-            st.caption("Live view of Vesna's CWR Sequencing spreadsheet. "
-                       "Edit directly in Dropbox.")
+            st.caption("Live view of Vesna's CWR Sequencing spreadsheet. Edit in Dropbox.")
 
             def row_style(row):
-                s = str(row.get("Status", row.get("status", ""))).lower()
-                if s == "accepted":
-                    return ["background-color:#F0FFF4"] * len(row)
-                if s == "failed":
-                    return ["background-color:#FFF0F0"] * len(row)
-                if s in ("pending", "ongoing"):
-                    return ["background-color:#FFFBF0"] * len(row)
+                for c in row.index:
+                    s = str(row[c]).lower()
+                    if s in ("accepted",):
+                        return ["background-color:#F0FFF4"] * len(row)
+                    if s in ("failed",):
+                        return ["background-color:#FFF0F0"] * len(row)
+                    if s in ("pending", "ongoing"):
+                        return ["background-color:#FFFBF0"] * len(row)
                 return [""] * len(row)
 
             st.dataframe(
