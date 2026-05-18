@@ -1,7 +1,7 @@
 # ==============================================================================
 # rMG CWR CONVERTER - STREAMLIT APP
 # Claude Version | DP-669/rMG-cwr-converter-Claude-version
-# Version: v1.5.1 - 2026-05-12
+# Version: v1.5.2 - 2026-05-17
 #
 # Tab 1: Generate - CSV upload or SourceAudio API fetch -> .V22 + download
 # Tab 2: Validate - upload .V22, run geometry audit
@@ -31,7 +31,7 @@ from swn_manager import (
     SWNSyncMismatch, SWNError
 )
 
-APP_VERSION = "v1.5.1"
+APP_VERSION = "v1.5.2"
 APP_DATE    = "2026-05-12"
 
 # ---- PAGE CONFIG ----
