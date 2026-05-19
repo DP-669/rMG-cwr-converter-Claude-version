@@ -13,7 +13,7 @@ import streamlit as st
 from datetime import datetime, timezone
 
 REGISTRY_PATH = "rMG-cwr-converter/swn_registry.json"
-BOOTSTRAP_LAST_SWN = 13621
+BOOTSTRAP_LAST_SWN = 13734
 BOOTSTRAP_SOURCE = "CW260006 (CATASTROPHE TROPHY)"
 
 BOOTSTRAP_REGISTRY = {
