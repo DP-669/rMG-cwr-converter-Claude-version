@@ -1,57 +1,36 @@
 # ==============================================================================
-# SWN MANAGER — Submitter Work Number Registry
-#
-# GitHub is the master. swn_registry.json lives in the repo root.
-# Reads and writes via GitHub REST API using a Personal Access Token.
-#
-# Authentication: GitHub PAT stored in Streamlit Secrets under [GITHUB]
-#   token = "ghp_xxx"
-#   repo  = "DP-669/rMG-cwr-converter-Claude-version"
+# SWN MANAGER — GitHub as single source of truth
+# Reads and writes swn_registry.json directly to/from GitHub repo.
+# No Google Drive dependency. No session cache issues.
+# Survives reboots, redeploys, and Drive being offline.
 # ==============================================================================
 
-import base64
 import json
-import os
 import urllib.request
 import urllib.error
+import base64
+import streamlit as st
 from datetime import datetime, timezone
 
-
-LOCAL_REGISTRY_PATH = "swn_registry.json"
-GITHUB_FILE_PATH    = "swn_registry.json"
+REGISTRY_PATH = "rMG-cwr-converter/swn_registry.json"
+BOOTSTRAP_LAST_SWN = 13621
+BOOTSTRAP_SOURCE = "CW260006 (CATASTROPHE TROPHY)"
 
 BOOTSTRAP_REGISTRY = {
-    "last_swn_used": 13621,
-    "last_swn_source": "CW260006 (CATASTROPHE TROPHY)",
+    "last_swn_used": BOOTSTRAP_LAST_SWN,
+    "last_swn_source": BOOTSTRAP_SOURCE,
     "updated": "2026-05-13T00:00:00",
     "history": [
-        {
-            "file": "CW250010LUM_319.V22",
-            "album": "redCola catalog",
-            "swn_start": 1,
-            "swn_end": 10011,
-            "track_count": 10011,
-            "generated_by": "Chris",
-            "date": "2025-01-01T00:00:00"
-        },
-        {
-            "file": "CW250011LUM_319.V22",
-            "album": "EPP+SSC catalog",
-            "swn_start": 10012,
-            "swn_end": 13616,
-            "track_count": 3605,
-            "generated_by": "Chris",
-            "date": "2025-01-01T00:00:00"
-        },
-        {
-            "file": "CW260006LUM_319.V22",
-            "album": "rC055",
-            "swn_start": 13617,
-            "swn_end": 13621,
-            "track_count": 5,
-            "generated_by": "rMG CWR Converter v1.5.1",
-            "date": "2026-05-13T00:00:00"
-        }
+        {"file": "CW250010LUM_319.V22", "album": "redCola catalog",
+         "swn_start": 1, "swn_end": 10011, "track_count": 10011,
+         "generated_by": "Chris", "date": "2025-01-01T00:00:00"},
+        {"file": "CW250011LUM_319.V22", "album": "EPP+SSC catalog",
+         "swn_start": 10012, "swn_end": 13616, "track_count": 3605,
+         "generated_by": "Chris", "date": "2025-01-01T00:00:00"},
+        {"file": "CW260006LUM_319.V22", "album": "rC055",
+         "swn_start": 13617, "swn_end": 13621, "track_count": 5,
+         "generated_by": "rMG CWR Converter v1.5.1",
+         "date": "2026-05-13T00:00:00"}
     ]
 }
 
@@ -61,247 +40,164 @@ class SWNError(Exception):
 
 
 class SWNSyncMismatch(Exception):
-    def __init__(self, local_val, github_val):
-        self.local_val  = local_val
-        self.github_val = github_val
-        super().__init__(
-            f"SWN registry mismatch: local={local_val}, GitHub={github_val}"
-        )
+    def __init__(self, local_val, drive_val):
+        self.local_val = local_val
+        self.drive_val = drive_val
 
 
-# ---------------------------------------------------------------------------
-# GitHub API helpers
-# ---------------------------------------------------------------------------
-
-def _github_headers(token: str) -> dict:
+def _github_headers(token):
     return {
-        "Authorization": f"Bearer {token}",
-        "Accept":        "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent":    "rMG-CWR-Converter/1.5.2",
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
     }
 
 
-def _read_from_github(token: str, repo: str) -> tuple[dict, str]:
-    """Returns (registry_dict, sha) from GitHub."""
-    url = f"https://api.github.com/repos/{repo}/contents/{GITHUB_FILE_PATH}"
+def _get_github_config(secrets):
+    """Extract GitHub token and repo from Streamlit secrets."""
+    gh = secrets.get("GITHUB", {}) if hasattr(secrets, 'get') else {}
+    token = gh.get("token", "")
+    repo  = gh.get("repo", "DP-669/rMG-cwr-converter-Claude-version")
+    return token, repo
+
+
+def _read_from_github(token, repo):
+    """Read swn_registry.json from GitHub. Returns (content_dict, sha)."""
+    url = f"https://api.github.com/repos/{repo}/contents/{REGISTRY_PATH}"
     req = urllib.request.Request(url, headers=_github_headers(token))
     try:
-        with urllib.request.urlopen(req) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            content = base64.b64decode(data["content"]).decode("utf-8")
-            return json.loads(content), data["sha"]
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            content = json.loads(base64.b64decode(data["content"]).decode("utf-8"))
+            return content, data["sha"]
     except urllib.error.HTTPError as e:
-        raise SWNError(f"GitHub read failed (HTTP {e.code}): {e.reason}")
-    except Exception as e:
-        raise SWNError(f"GitHub read failed: {e}")
+        if e.code == 404:
+            return None, None
+        raise
+    except Exception:
+        return None, None
 
 
-def _write_to_github(token: str, repo: str, registry: dict, sha: str) -> None:
-    """Commits registry_dict to GitHub, requires current SHA."""
-    url     = f"https://api.github.com/repos/{repo}/contents/{GITHUB_FILE_PATH}"
-    content = base64.b64encode(
+def _write_to_github(token, repo, registry, sha):
+    """Write swn_registry.json to GitHub. sha required for updates."""
+    url = f"https://api.github.com/repos/{repo}/contents/{REGISTRY_PATH}"
+    content_b64 = base64.b64encode(
         json.dumps(registry, indent=2).encode("utf-8")
     ).decode("utf-8")
-    payload = json.dumps({
-        "message": f"SWN update — last used {registry.get('last_swn_used')}",
-        "content": content,
-        "sha":     sha,
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=payload,
-        headers={**_github_headers(token), "Content-Type": "application/json"},
-        method="PUT"
-    )
+    payload = {
+        "message": f"Update SWN registry - last used {registry['last_swn_used']}",
+        "content": content_b64,
+    }
+    if sha:
+        payload["sha"] = sha
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data,
+                                  headers=_github_headers(token),
+                                  method="PUT")
     try:
-        with urllib.request.urlopen(req) as resp:
-            resp.read()
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8")
-        raise SWNError(f"GitHub write failed (HTTP {e.code}): {body}")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
     except Exception as e:
         raise SWNError(f"GitHub write failed: {e}")
 
 
-# ---------------------------------------------------------------------------
-# Local cache helpers
-# ---------------------------------------------------------------------------
+def load_registry(secrets):
+    """
+    Load SWN registry from GitHub.
+    Falls back to bootstrap values if GitHub unavailable or token missing.
+    """
+    token, repo = _get_github_config(secrets)
 
-def _read_local() -> dict | None:
-    if not os.path.exists(LOCAL_REGISTRY_PATH):
-        return None
-    try:
-        with open(LOCAL_REGISTRY_PATH, "r") as f:
-            return json.load(f)
-    except Exception:
-        return None
+    if not token:
+        # No GitHub token - use bootstrap, warn clearly
+        reg = dict(BOOTSTRAP_REGISTRY)
+        reg["_github_available"] = False
+        reg["_sync_warning"] = "No GitHub token in Secrets - using bootstrap values. Add [GITHUB] token."
+        reg["_bootstrapped"] = True
+        return reg
+
+    content, sha = _read_from_github(token, repo)
+
+    if content is None:
+        # GitHub unreachable or file missing - use bootstrap
+        reg = dict(BOOTSTRAP_REGISTRY)
+        reg["_github_available"] = False
+        reg["_sync_warning"] = "GitHub unreachable - using bootstrap values."
+        reg["_bootstrapped"] = True
+        reg["_sha"] = None
+        return reg
+
+    # Successfully read from GitHub
+    content["_github_available"] = True
+    content["_sync_warning"] = ""
+    content["_bootstrapped"] = False
+    content["_sha"] = sha
+    content["_token"] = token
+    content["_repo"] = repo
+    return content
 
 
-def _write_local(registry: dict) -> None:
-    with open(LOCAL_REGISTRY_PATH, "w") as f:
-        json.dump(registry, f, indent=2)
+def get_next_swn(registry):
+    """Return the next available SWN."""
+    return int(registry.get("last_swn_used", BOOTSTRAP_LAST_SWN)) + 1
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+def format_swn(value):
+    """Format SWN as 7-digit zero-padded string."""
+    return f"{int(value):07d}"
 
-def load_registry(secrets: dict) -> dict:
-    gh_cfg = secrets.get("GITHUB", {})
-    token  = gh_cfg.get("token", "")
-    repo   = gh_cfg.get("repo", "")
 
-    github_registry = None
-    github_sha      = None
-    github_error    = None
+def commit_swn_range(registry, swn_start, swn_end, track_count,
+                     filename, album, secrets):
+    """
+    Update registry after successful generation.
+    Writes back to GitHub immediately.
+    """
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
-    if token and repo:
+    updated = {
+        "last_swn_used": swn_end,
+        "last_swn_source": f"{filename} ({album})",
+        "updated": now,
+        "history": list(registry.get("history", [])) + [{
+            "file": filename,
+            "album": album,
+            "swn_start": swn_start,
+            "swn_end": swn_end,
+            "track_count": track_count,
+            "generated_by": f"rMG CWR Converter",
+            "date": now,
+        }]
+    }
+
+    token = registry.get("_token", "")
+    repo  = registry.get("_repo", "DP-669/rMG-cwr-converter-Claude-version")
+    sha   = registry.get("_sha")
+
+    if token:
         try:
-            github_registry, github_sha = _read_from_github(token, repo)
-        except SWNError as e:
-            github_error = str(e)
-
-    local_registry = _read_local()
-
-    # Bootstrap — nothing anywhere
-    if github_registry is None and local_registry is None:
-        registry = dict(BOOTSTRAP_REGISTRY)
-        registry["updated"] = datetime.now(timezone.utc).isoformat()
-        _write_local(registry)
-        registry["_github_available"] = False
-        registry["_github_error"]     = github_error or "No GitHub config"
-        registry["_bootstrapped"]     = True
-        return registry
-
-    # GitHub unavailable — use local cache
-    if github_registry is None and local_registry is not None:
-        local_registry["_github_available"] = False
-        local_registry["_github_error"]     = github_error
-        local_registry["_sync_warning"] = (
-            "⚠️ GitHub unavailable. Using local cache. "
-            "Generation allowed but GitHub backup is offline."
-        )
-        return local_registry
-
-    # Local missing — seed from GitHub
-    if github_registry is not None and local_registry is None:
-        _write_local(github_registry)
-        github_registry["_github_available"] = True
-        github_registry["_github_error"]     = None
-        github_registry["_github_sha"]       = github_sha
-        github_registry["_token"]            = token
-        github_registry["_repo"]             = repo
-        return github_registry
-
-    # Both present — check for mismatch
-    g_swn = github_registry.get("last_swn_used", -1)
-    l_swn = local_registry.get("last_swn_used", -2)
-
-    if g_swn != l_swn:
-        raise SWNSyncMismatch(local_val=l_swn, github_val=g_swn)
-
-    _write_local(github_registry)
-    github_registry["_github_available"] = True
-    github_registry["_github_error"]     = None
-    github_registry["_github_sha"]       = github_sha
-    github_registry["_token"]            = token
-    github_registry["_repo"]             = repo
-    return github_registry
-
-
-def get_next_swn(registry: dict) -> int:
-    return int(registry["last_swn_used"]) + 1
-
-
-def commit_swn_range(
-    registry: dict,
-    swn_start: int,
-    swn_end: int,
-    track_count: int,
-    filename: str,
-    album: str,
-    secrets: dict
-) -> dict:
-    now = datetime.now(timezone.utc).isoformat()
-    registry["last_swn_used"]   = swn_end
-    registry["last_swn_source"] = f"rMG Converter — {filename} ({album})"
-    registry["updated"]         = now
-    registry.setdefault("history", []).append({
-        "file":         filename,
-        "album":        album,
-        "swn_start":    swn_start,
-        "swn_end":      swn_end,
-        "track_count":  track_count,
-        "generated_by": "rMG Converter",
-        "date":         now
-    })
-
-    clean = {k: v for k, v in registry.items() if not k.startswith("_")}
-    _write_local(clean)
-
-    token = registry.get("_token") or secrets.get("GITHUB", {}).get("token", "")
-    repo  = registry.get("_repo")  or secrets.get("GITHUB", {}).get("repo", "")
-    sha   = registry.get("_github_sha", "")
-
-    if token and repo and sha:
-        try:
-            _write_to_github(token, repo, clean, sha)
-            # Fetch new SHA for subsequent writes this session
+            _write_to_github(token, repo, updated, sha)
+            updated["_github_available"] = True
+            updated["_sync_warning"] = ""
+            # Refresh SHA after write
             _, new_sha = _read_from_github(token, repo)
-            registry["_github_sha"] = new_sha
+            updated["_sha"] = new_sha
         except SWNError as e:
-            registry["_github_write_error"] = str(e)
-    elif token and repo:
-        # SHA missing — fetch it
-        try:
-            _, current_sha = _read_from_github(token, repo)
-            _write_to_github(token, repo, clean, current_sha)
-            _, new_sha = _read_from_github(token, repo)
-            registry["_github_sha"] = new_sha
-        except SWNError as e:
-            registry["_github_write_error"] = str(e)
-
-    return registry
-
-
-def resolve_conflict(
-    use_github: bool,
-    local_val: int,
-    github_val: int,
-    secrets: dict
-) -> dict:
-    gh_cfg = secrets.get("GITHUB", {})
-    token  = gh_cfg.get("token", "")
-    repo   = gh_cfg.get("repo", "")
-
-    chosen = github_val if use_github else local_val
-    source = "GitHub (manual resolution)" if use_github else "Local cache (manual resolution)"
-
-    if use_github and token and repo:
-        try:
-            registry, sha = _read_from_github(token, repo)
-        except SWNError:
-            registry = _read_local() or dict(BOOTSTRAP_REGISTRY)
-            sha = ""
+            updated["_github_available"] = False
+            updated["_drive_write_error"] = str(e)
+            updated["_sync_warning"] = f"GitHub write failed: {e}"
     else:
-        registry = _read_local() or dict(BOOTSTRAP_REGISTRY)
-        sha = ""
+        updated["_github_available"] = False
+        updated["_sync_warning"] = "No GitHub token - registry not persisted."
 
-    registry["last_swn_used"]   = chosen
-    registry["last_swn_source"] = source
-    registry["updated"]         = datetime.now(timezone.utc).isoformat()
-
-    clean = {k: v for k, v in registry.items() if not k.startswith("_")}
-    _write_local(clean)
-    if token and repo and sha:
-        try:
-            _write_to_github(token, repo, clean, sha)
-        except SWNError:
-            pass
-
-    clean["_github_available"] = bool(token and repo)
-    return clean
+    updated["_token"] = token
+    updated["_repo"] = repo
+    updated["_bootstrapped"] = False
+    return updated
 
 
-def format_swn(n: int) -> str:
-    return f"{n:07d}"
+def resolve_conflict(use_drive, local_val, drive_val, secrets):
+    """Kept for API compatibility."""
+    reg = dict(BOOTSTRAP_REGISTRY)
+    reg["last_swn_used"] = drive_val if use_drive else local_val
+    return load_registry(secrets)
