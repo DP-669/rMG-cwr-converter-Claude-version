@@ -135,21 +135,14 @@ def _dropbox_download(path, token):
 
 
 def _dropbox_download_by_link(link_url, token):
-    """Download a file via its Dropbox shared link. Returns (bytes, path_display)."""
-    url = "https://content.dropboxapi.com/2/sharing/get_shared_link_file"
-    arg = json.dumps({"url": link_url})
-    req = urllib.request.Request(
-        url, data=b"",
-        headers={
-            "Authorization":   f"Bearer {token}",
-            "Dropbox-API-Arg": arg,
-            "Content-Type":    "text/plain",
-        }
-    )
+    """Download a file via its Dropbox shared link (direct dl=1 method).
+    Returns (bytes, path_display). token is accepted for signature compatibility."""
+    direct_url = link_url.split("?")[0] + "?" + "&".join(
+        p for p in link_url.split("?")[1].split("&") if not p.startswith("dl=")
+    ) + "&dl=1"
+    req = urllib.request.Request(direct_url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=15) as resp:
-        raw = resp.read()
-        meta = json.loads(resp.getheader("Dropbox-API-Result", "{}"))
-        return raw, meta.get("path_display", DROPBOX_SEQ_PATH)
+        return resp.read(), DROPBOX_SEQ_PATH
 
 
 def _dropbox_upload(path, content, token):
