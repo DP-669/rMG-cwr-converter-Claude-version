@@ -705,3 +705,4 @@ with tab_ledger:
                                     "swn_end", "track_count", "generated_by"]
                         if c in hdf.columns]
                 st.dataframe(hdf[cols], use_container_width=True, hide_index=True)
+
