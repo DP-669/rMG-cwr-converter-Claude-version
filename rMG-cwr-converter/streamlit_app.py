@@ -668,6 +668,12 @@ with tab_ledger:
         df = load_sequencing_spreadsheet(dropbox_token)
 
         if df is None:
+            # Debug: show the actual error
+            try:
+                _raw = _dropbox_download(DROPBOX_SEQ_PATH, dropbox_token)
+                st.error(f"Download OK ({len(_raw)} bytes) but parse failed.")
+            except Exception as _e:
+                st.error(f"Dropbox download error: {_e}")
             st.error("Could not load spreadsheet from Dropbox. Check token and file path.")
         elif df.empty:
             st.info("Spreadsheet loaded — no entries found.")
