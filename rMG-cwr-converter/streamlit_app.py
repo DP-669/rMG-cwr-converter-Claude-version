@@ -116,6 +116,7 @@ for k in catalogs:
 # ==============================================================================
 
 DROPBOX_SEQ_PATH = "/01 rMG Admin/03 Metadata, Registrations & Data/00 CWR/2026 CWR Registrations/CWR-Sequencing-by-albums-2026.xlsx"
+DROPBOX_SEQ_LINK = "https://www.dropbox.com/scl/fi/duv1hvzx57vtfeh2w51mp/CWR-Sequencing-by-albums-2026.xlsx?rlkey=f796jseqns4sliqkmn6lvlosk"
 
 
 def _dropbox_download(path, token):
@@ -131,6 +132,24 @@ def _dropbox_download(path, token):
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         return resp.read()
+
+
+def _dropbox_download_by_link(link_url, token):
+    """Download a file via its Dropbox shared link. Returns (bytes, path_display)."""
+    url = "https://content.dropboxapi.com/2/sharing/get_shared_link_file"
+    arg = json.dumps({"url": link_url})
+    req = urllib.request.Request(
+        url, data=b"",
+        headers={
+            "Authorization":   f"Bearer {token}",
+            "Dropbox-API-Arg": arg,
+            "Content-Type":    "text/plain",
+        }
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        raw = resp.read()
+        meta = json.loads(resp.getheader("Dropbox-API-Result", "{}"))
+        return raw, meta.get("path_display", DROPBOX_SEQ_PATH)
 
 
 def _dropbox_upload(path, content, token):
@@ -153,7 +172,7 @@ def load_sequencing_spreadsheet(token):
     if not token:
         return None
     try:
-        raw = _dropbox_download(DROPBOX_SEQ_PATH, token)
+        raw, _ = _dropbox_download_by_link(DROPBOX_SEQ_LINK, token)
         df  = pd.read_excel(io.BytesIO(raw), header=1)
         df.columns = [str(c).strip() for c in df.columns]
         cwr_col = None
@@ -189,7 +208,7 @@ def write_new_row_to_dropbox(token, cwr_filename, album_name, album_code, date_s
     if not token:
         return False
     try:
-        raw = _dropbox_download(DROPBOX_SEQ_PATH, token)
+        raw, actual_path = _dropbox_download_by_link(DROPBOX_SEQ_LINK, token)
         df  = pd.read_excel(io.BytesIO(raw), header=None)
         insert_row = len(df)
         for i, row in df.iterrows():
@@ -203,7 +222,7 @@ def write_new_row_to_dropbox(token, cwr_filename, album_name, album_code, date_s
         buf = io.BytesIO()
         df.to_excel(buf, index=False, header=False)
         buf.seek(0)
-        _dropbox_upload(DROPBOX_SEQ_PATH, buf.read(), token)
+        _dropbox_upload(actual_path, buf.read(), token)
         return True
     except Exception:
         return False
@@ -227,15 +246,6 @@ if "next_seq" not in st.session_state:
     st.session_state["next_seq"] = get_next_sequence_from_dropbox(dropbox_token)
 
 next_seq = st.session_state["next_seq"]
-
-# ---- DIAGNOSTICS (TEMPORARY) ----
-with st.expander("🔍 Secrets Diagnostic (temporary)", expanded=True):
-    st.caption(f"Secret keys visible: {list(st.secrets.keys())}")
-    st.caption(f"DROPBOX keys: {list(st.secrets.get('DROPBOX', {}).keys())}")
-    _db_raw = st.secrets.get("DROPBOX", {})
-    _token_val = _db_raw.get("token", "") if hasattr(_db_raw, "get") else ""
-    st.caption(f"DROPBOX.token length: {len(_token_val)} chars | starts: {repr(_token_val[:12]) if _token_val else 'EMPTY'}")
-    st.caption(f"dropbox_token (module-level) length: {len(dropbox_token)} | starts: {repr(dropbox_token[:12]) if dropbox_token else 'EMPTY'}")
 
 # ---- TABS ----
 tab_gen, tab_val, tab_ledger = st.tabs(["⚡  Generate", "🛡️  Validate", "📋  Ledger"])
@@ -668,15 +678,6 @@ with tab_ledger:
         df = load_sequencing_spreadsheet(dropbox_token)
 
         if df is None:
-            # Debug: show the actual error including Dropbox JSON body
-            try:
-                _raw = _dropbox_download(DROPBOX_SEQ_PATH, dropbox_token)
-                st.error(f"Download OK ({len(_raw)} bytes) but parse failed.")
-            except urllib.error.HTTPError as _e:
-                _body = _e.read().decode("utf-8", errors="replace")
-                st.error(f"Dropbox HTTP {_e.code}: {_body}")
-            except Exception as _e:
-                st.error(f"Dropbox download error: {type(_e).__name__}: {_e}")
             st.error("Could not load spreadsheet from Dropbox. Check token and file path.")
         elif df.empty:
             st.info("Spreadsheet loaded — no entries found.")
