@@ -228,6 +228,15 @@ if "next_seq" not in st.session_state:
 
 next_seq = st.session_state["next_seq"]
 
+# ---- DIAGNOSTICS (TEMPORARY) ----
+with st.expander("🔍 Secrets Diagnostic (temporary)", expanded=True):
+    st.caption(f"Secret keys visible: {list(st.secrets.keys())}")
+    st.caption(f"DROPBOX keys: {list(st.secrets.get('DROPBOX', {}).keys())}")
+    _db_raw = st.secrets.get("DROPBOX", {})
+    _token_val = _db_raw.get("token", "") if hasattr(_db_raw, "get") else ""
+    st.caption(f"DROPBOX.token length: {len(_token_val)} chars | starts: {repr(_token_val[:12]) if _token_val else 'EMPTY'}")
+    st.caption(f"dropbox_token (module-level) length: {len(dropbox_token)} | starts: {repr(dropbox_token[:12]) if dropbox_token else 'EMPTY'}")
+
 # ---- TABS ----
 tab_gen, tab_val, tab_ledger = st.tabs(["⚡  Generate", "🛡️  Validate", "📋  Ledger"])
 
