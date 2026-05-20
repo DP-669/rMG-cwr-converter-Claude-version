@@ -115,7 +115,7 @@ for k in catalogs:
 # DROPBOX SPREADSHEET INTEGRATION
 # ==============================================================================
 
-DROPBOX_SEQ_PATH = "/01 rMG Admin/03 Metadata, Registrations & Data/00 CWR/2026 CWR registrations/CWR Sequencing by albums.xlsx"
+DROPBOX_SEQ_PATH = "/01 rMG Admin/03 Metadata, Registrations & Data/00 CWR/2026 CWR Registrations/CWR-Sequencing-by-albums-2026.xlsx"
 
 
 def _dropbox_download(path, token):
@@ -668,12 +668,15 @@ with tab_ledger:
         df = load_sequencing_spreadsheet(dropbox_token)
 
         if df is None:
-            # Debug: show the actual error
+            # Debug: show the actual error including Dropbox JSON body
             try:
                 _raw = _dropbox_download(DROPBOX_SEQ_PATH, dropbox_token)
                 st.error(f"Download OK ({len(_raw)} bytes) but parse failed.")
+            except urllib.error.HTTPError as _e:
+                _body = _e.read().decode("utf-8", errors="replace")
+                st.error(f"Dropbox HTTP {_e.code}: {_body}")
             except Exception as _e:
-                st.error(f"Dropbox download error: {_e}")
+                st.error(f"Dropbox download error: {type(_e).__name__}: {_e}")
             st.error("Could not load spreadsheet from Dropbox. Check token and file path.")
         elif df.empty:
             st.info("Spreadsheet loaded — no entries found.")
