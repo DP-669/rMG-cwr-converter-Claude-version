@@ -30,8 +30,8 @@ from swn_manager import (
     SWNSyncMismatch, SWNError
 )
 
-APP_VERSION = "v1.6.0"
-APP_DATE    = "2026-05-19"
+APP_VERSION = "v1.7.0"
+APP_DATE    = "2026-05-20"
 
 # ---- PAGE CONFIG ----
 st.set_page_config(
@@ -79,7 +79,6 @@ sa_token      = st.secrets.get("SOURCEAUDIO", {}).get("token", "")
 def _get_dropbox_token():
     """Get a valid Dropbox access token. Uses refresh token if available."""
     db = st.secrets.get("DROPBOX", {})
-    # Prefer refresh token flow (never expires)
     refresh_token = db.get("refresh_token", "")
     app_key       = db.get("app_key", "")
     app_secret    = db.get("app_secret", "")
@@ -99,7 +98,6 @@ def _get_dropbox_token():
                 return json.loads(resp.read())["access_token"]
         except Exception:
             pass
-    # Fall back to static token
     return db.get("token", "")
 
 dropbox_token = _get_dropbox_token()
@@ -115,8 +113,7 @@ for k in catalogs:
 # DROPBOX SPREADSHEET INTEGRATION
 # ==============================================================================
 
-DROPBOX_SEQ_PATH = "/01 rMG Admin/03 Metadata, Registrations & Data/00 CWR/2026 CWR Registrations/CWR-Sequencing-by-albums-2026.xlsx"
-DROPBOX_SEQ_LINK = "https://www.dropbox.com/scl/fi/duv1hvzx57vtfeh2w51mp/CWR-Sequencing-by-albums-2026.xlsx?rlkey=f796jseqns4sliqkmn6lvlosk"
+DROPBOX_SEQ_PATH = "/01 rMG Admin/03 Metadata, Registrations & Data/00 CWR/2026 CWR registrations/CWR Sequencing by albums.xlsx"
 
 
 def _dropbox_download(path, token):
@@ -132,17 +129,6 @@ def _dropbox_download(path, token):
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         return resp.read()
-
-
-def _dropbox_download_by_link(link_url, token):
-    """Download a file via its Dropbox shared link (direct dl=1 method).
-    Returns (bytes, path_display). token is accepted for signature compatibility."""
-    direct_url = link_url.split("?")[0] + "?" + "&".join(
-        p for p in link_url.split("?")[1].split("&") if not p.startswith("dl=")
-    ) + "&dl=1"
-    req = urllib.request.Request(direct_url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return resp.read(), DROPBOX_SEQ_PATH
 
 
 def _dropbox_upload(path, content, token):
@@ -165,7 +151,7 @@ def load_sequencing_spreadsheet(token):
     if not token:
         return None
     try:
-        raw, _ = _dropbox_download_by_link(DROPBOX_SEQ_LINK, token)
+        raw = _dropbox_download(DROPBOX_SEQ_PATH, token)
         df  = pd.read_excel(io.BytesIO(raw), header=1)
         df.columns = [str(c).strip() for c in df.columns]
         cwr_col = None
@@ -201,7 +187,7 @@ def write_new_row_to_dropbox(token, cwr_filename, album_name, album_code, date_s
     if not token:
         return False
     try:
-        raw, actual_path = _dropbox_download_by_link(DROPBOX_SEQ_LINK, token)
+        raw = _dropbox_download(DROPBOX_SEQ_PATH, token)
         df  = pd.read_excel(io.BytesIO(raw), header=None)
         insert_row = len(df)
         for i, row in df.iterrows():
@@ -215,7 +201,7 @@ def write_new_row_to_dropbox(token, cwr_filename, album_name, album_code, date_s
         buf = io.BytesIO()
         df.to_excel(buf, index=False, header=False)
         buf.seek(0)
-        _dropbox_upload(actual_path, buf.read(), token)
+        _dropbox_upload(DROPBOX_SEQ_PATH, buf.read(), token)
         return True
     except Exception:
         return False
@@ -406,14 +392,62 @@ with tab_gen:
         Next file starts at: <code>{format_swn(get_next_swn(registry))}</code>
         </div>""", unsafe_allow_html=True)
 
-    seq_source = "Vesna's CWR Sequencing spreadsheet" if dropbox_token else "local fallback"
-    st.markdown(f"""
-    <div class='seq-box'>
-    📄 <strong>Next file:</strong> <code>CW26{next_seq:04d}LUM_319.V22</code>
-    · Sequence <code>{next_seq:04d}</code> · Source: {seq_source}
-    </div>""", unsafe_allow_html=True)
+    if registry:
+        last_swn_used = int(registry.get("last_swn_used", 0))
+        last_src      = registry.get("last_swn_source", "—")
+        last_history  = registry.get("history", [])
+        last_entry    = last_history[-1] if last_history else None
 
-    # ---- SWN RESET (for Vesna — advanced use only) ----
+        st.markdown("#### Previous file status")
+        if last_entry:
+            st.markdown(f"""
+            <div class='swn-box'>
+            📄 <strong>{last_entry.get('file', '—')}</strong><br>
+            SWN: <code>{format_swn(last_entry.get('swn_start', 0))}</code>
+            → <code>{format_swn(last_entry.get('swn_end', 0))}</code>
+            &nbsp;·&nbsp; {last_entry.get('track_count', '?')} tracks
+            &nbsp;·&nbsp; Generated: {str(last_entry.get('date', '—'))[:10]}
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.caption(f"Last SWN used: {format_swn(last_swn_used)} · {last_src}")
+
+        accepted = st.checkbox(
+            "This file was accepted by ICE",
+            value=st.session_state.get("prev_accepted", False),
+            key="prev_accepted_checkbox",
+            help="Check this only after ICE confirms acceptance. "
+                 "When checked, SWN and file sequence are locked and auto-incremented. "
+                 "When unchecked, you can enter any values manually."
+        )
+        st.session_state["prev_accepted"] = accepted
+
+        if accepted:
+            locked_seq = next_seq
+            locked_swn = last_swn_used + 1
+            seq_source = "Vesna's CWR Sequencing spreadsheet" if dropbox_token else "local fallback"
+            st.markdown(f"""
+            <div class='seq-box'>
+            🔒 <strong>Next file (locked):</strong>
+            <code>CW26{locked_seq:04d}LUM_319.V22</code>
+            · Sequence <code>{locked_seq:04d}</code>
+            · Next SWN: <code>{format_swn(locked_swn)}</code>
+            · Source: {seq_source}
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class='swn-warn'>
+            ✏️ <strong>Manual mode</strong> — previous file not yet accepted.
+            Enter sequence and starting SWN manually below.
+            </div>""", unsafe_allow_html=True)
+    else:
+        accepted = False
+        seq_source = "Vesna's CWR Sequencing spreadsheet" if dropbox_token else "local fallback"
+        st.markdown(f"""
+        <div class='seq-box'>
+        📄 <strong>Next file:</strong> <code>CW26{next_seq:04d}LUM_319.V22</code>
+        · Sequence <code>{next_seq:04d}</code> · Source: {seq_source}
+        </div>""", unsafe_allow_html=True)
+
     with st.expander("Reset SWN — use only if a generated file was NOT submitted to ICE"):
         if registry:
             current_last = int(registry.get("last_swn_used", 0))
@@ -457,6 +491,7 @@ with tab_gen:
                         "date": now,
                     })
                     updated_reg["history"] = hist
+
                     try:
                         from swn_manager import commit_swn_range
                         token = registry.get("_token", "")
@@ -508,11 +543,14 @@ with tab_gen:
             format_func=lambda k: f"{k} — {catalogs[k]['label']}"
         )
     with col_opt2:
-        seq_override = st.number_input(
-            "Sequence (auto — override if needed)",
-            min_value=1, max_value=9999,
-            value=int(next_seq), step=1
-        )
+        if accepted:
+            seq_override = next_seq
+            st.number_input("Sequence (locked)", min_value=next_seq,
+                            max_value=next_seq, value=next_seq, step=1, disabled=True)
+        else:
+            seq_override = st.number_input("Sequence (manual — enter any value)",
+                                           min_value=1, max_value=9999,
+                                           value=int(next_seq), step=1)
 
     if swn_blocked:
         st.warning("⛔ Resolve SWN conflict above before generating.")
@@ -717,4 +755,3 @@ with tab_ledger:
                                     "swn_end", "track_count", "generated_by"]
                         if c in hdf.columns]
                 st.dataframe(hdf[cols], use_container_width=True, hide_index=True)
-
