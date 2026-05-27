@@ -14,12 +14,12 @@ from datetime import datetime, timezone
 
 REGISTRY_PATH = "rMG-cwr-converter/swn_registry.json"
 BOOTSTRAP_LAST_SWN = 13734
-BOOTSTRAP_SOURCE = "CW260006 (CATASTROPHE TROPHY)"
+BOOTSTRAP_SOURCE = "CW260006LUM_319.V22 - Vessel tracks 6-118"
 
 BOOTSTRAP_REGISTRY = {
     "last_swn_used": BOOTSTRAP_LAST_SWN,
     "last_swn_source": BOOTSTRAP_SOURCE,
-    "updated": "2026-05-13T00:00:00",
+    "updated": "2026-05-18T00:00:00",
     "history": [
         {"file": "CW250010LUM_319.V22", "album": "redCola catalog",
          "swn_start": 1, "swn_end": 10011, "track_count": 10011,
@@ -27,10 +27,12 @@ BOOTSTRAP_REGISTRY = {
         {"file": "CW250011LUM_319.V22", "album": "EPP+SSC catalog",
          "swn_start": 10012, "swn_end": 13616, "track_count": 3605,
          "generated_by": "Chris", "date": "2025-01-01T00:00:00"},
-        {"file": "CW260006LUM_319.V22", "album": "rC055",
+        {"file": "CW260005LUM_319.V22", "album": "rC055 Vessel 5-track test",
          "swn_start": 13617, "swn_end": 13621, "track_count": 5,
-         "generated_by": "rMG CWR Converter v1.5.1",
-         "date": "2026-05-13T00:00:00"}
+         "generated_by": "rMG CWR Converter", "date": "2026-05-13T00:00:00"},
+        {"file": "CW260006LUM_319.V22", "album": "rC055 Vessel tracks 6-118",
+         "swn_start": 13622, "swn_end": 13734, "track_count": 113,
+         "generated_by": "rMG CWR Converter", "date": "2026-05-18T00:00:00"}
     ]
 }
 
