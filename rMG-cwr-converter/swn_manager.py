@@ -13,13 +13,13 @@ import streamlit as st
 from datetime import datetime, timezone
 
 REGISTRY_PATH = "rMG-cwr-converter/swn_registry.json"
-BOOTSTRAP_LAST_SWN = 13734
-BOOTSTRAP_SOURCE = "CW260006LUM_319.V22 - Vessel tracks 6-118"
+BOOTSTRAP_LAST_SWN = 13852
+BOOTSTRAP_SOURCE = "CW260007LUM_319.V22 - Transparency"
 
 BOOTSTRAP_REGISTRY = {
     "last_swn_used": BOOTSTRAP_LAST_SWN,
     "last_swn_source": BOOTSTRAP_SOURCE,
-    "updated": "2026-05-18T00:00:00",
+    "updated": "2026-05-27T00:00:00",
     "history": [
         {"file": "CW250010LUM_319.V22", "album": "redCola catalog",
          "swn_start": 1, "swn_end": 10011, "track_count": 10011,
@@ -32,7 +32,10 @@ BOOTSTRAP_REGISTRY = {
          "generated_by": "rMG CWR Converter", "date": "2026-05-13T00:00:00"},
         {"file": "CW260006LUM_319.V22", "album": "rC055 Vessel tracks 6-118",
          "swn_start": 13622, "swn_end": 13734, "track_count": 113,
-         "generated_by": "rMG CWR Converter", "date": "2026-05-18T00:00:00"}
+         "generated_by": "rMG CWR Converter", "date": "2026-05-18T00:00:00"},
+        {"file": "CW260007LUM_319.V22", "album": "Transparency",
+         "swn_start": 13735, "swn_end": 13852, "track_count": 118,
+         "generated_by": "rMG CWR Converter", "date": "2026-05-27T00:00:00"}
     ]
 }
 
