@@ -25,7 +25,7 @@ from swn_manager import (
     SWNSyncMismatch, SWNError
 )
 
-APP_VERSION = "v1.7.1"
+APP_VERSION = "v1.7.2"
 APP_DATE    = "2026-05-20"
 
 st.set_page_config(
@@ -361,10 +361,13 @@ if "swn_registry" not in st.session_state:
         st.session_state["swn_conflict"]  = None
         st.session_state["swn_load_error"] = str(e)
 
-if "next_seq" not in st.session_state:
-    st.session_state["next_seq"] = get_next_sequence_from_dropbox(dropbox_token)
-
-next_seq = st.session_state["next_seq"]
+# Always read sequence fresh from registry — never cache stale value
+_reg = st.session_state.get("swn_registry")
+if _reg:
+    next_seq = get_next_sequence(_reg)
+else:
+    next_seq = get_next_sequence_from_dropbox(dropbox_token)
+st.session_state["next_seq"] = next_seq
 
 # ---- TABS ----
 tab_gen, tab_val, tab_ledger = st.tabs(["Generate", "Validate", "Ledger"])
