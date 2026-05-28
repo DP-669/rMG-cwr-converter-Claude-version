@@ -20,12 +20,12 @@ from input_parser import parse_csv, ParseError
 from cwr_engine import generate_cwr, CWREngineError
 from cwr_validator import validate
 from swn_manager import (
-    load_registry, get_next_swn, commit_swn_range,
+    load_registry, get_next_swn, get_next_sequence, commit_swn_range,
     resolve_conflict, format_swn,
     SWNSyncMismatch, SWNError
 )
 
-APP_VERSION = "v1.7.0"
+APP_VERSION = "v1.7.1"
 APP_DATE    = "2026-05-20"
 
 st.set_page_config(
@@ -427,7 +427,8 @@ def run_generation(tracks, source_label, catalog_key, seq_num,
             track_count=len(tracks),
             filename=filename,
             album=album_label,
-            secrets=st.secrets
+            secrets=st.secrets,
+            sequence_number=seq_num
         )
         st.session_state["swn_registry"] = updated
 
