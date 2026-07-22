@@ -1,8 +1,8 @@
 {
-  "last_swn_used": 14427,
-  "last_swn_source": "CW260011LUM_319.V22 (EPP064)",
-  "last_sequence_used": 11,
-  "updated": "2026-07-06T11:52:02",
+  "last_swn_used": 14730,
+  "last_swn_source": "CW260012LUM_319.V22 (rC056)",
+  "last_sequence_used": 12,
+  "updated": "2026-07-22T10:38:01",
   "history": [
     {
       "file": "CW250010LUM_319.V22",
@@ -84,6 +84,15 @@
       "track_count": 83,
       "generated_by": "rMG CWR Converter",
       "date": "2026-07-06T11:52:02"
+    },
+    {
+      "file": "CW260012LUM_319.V22",
+      "album": "rC056",
+      "swn_start": 14428,
+      "swn_end": 14730,
+      "track_count": 303,
+      "generated_by": "rMG CWR Converter",
+      "date": "2026-07-22T10:38:01"
     }
   ]
 }
